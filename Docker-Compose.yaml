@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: buyback-admin-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: buyback_admin
+      POSTGRES_PASSWORD: buyback_password
+      POSTGRES_DB: buyback_db
+
+    ports:
+      - "5434:5432"
+
+    volumes:
+      - buyback_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  buyback_postgres_data:
