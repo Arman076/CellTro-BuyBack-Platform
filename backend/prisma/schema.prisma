@@ -1,0 +1,443 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Category {
+  id           Int     @id @default(autoincrement())
+  name         String
+  slug         String  @unique
+  imageUrl     String?
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
+
+  variantAttributes VariantAttribute[]
+  brands            CategoryBrand[]
+  products          Product[]
+  series            ProductSeries[]
+
+  questionnaireItems QuestionnaireItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Brand {
+  id           Int     @id @default(autoincrement())
+  name         String
+  slug         String  @unique
+  logoUrl      String?
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
+
+  categories CategoryBrand[]
+  products   Product[]
+  series     ProductSeries[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CategoryBrand {
+  id         Int @id @default(autoincrement())
+  categoryId Int
+  brandId    Int
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  brand    Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([categoryId, brandId])
+}
+
+model Product {
+  id           Int     @id @default(autoincrement())
+  name         String
+  slug         String
+  imageUrl     String?
+  description  String?
+  isActive     Boolean @default(true)
+  isFeatured   Boolean @default(false)
+  displayOrder Int     @default(0)
+
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  brandId Int
+  brand   Brand @relation(fields: [brandId], references: [id])
+
+  seriesId Int?
+  series   ProductSeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+
+  variants ProductVariant[]
+
+  questionnaireMappings       QuestionnaireItemProduct[]
+  questionnaireDeductionRules QuestionnaireDeductionRule[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([categoryId, brandId, slug])
+  @@index([seriesId])
+}
+
+model ProductVariant {
+  id Int @id @default(autoincrement())
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+
+  basePrice Decimal @db.Decimal(12, 2)
+  isActive  Boolean @default(true)
+
+  values VariantAttributeValue[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model VariantAttribute {
+  id           Int     @id @default(autoincrement())
+  name         String
+  slug         String
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
+
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  options VariantAttributeOption[]
+  values  VariantAttributeValue[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([categoryId, slug])
+}
+
+model VariantAttributeOption {
+  id           Int     @id @default(autoincrement())
+  value        String
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
+  isDefault    Boolean @default(false)
+
+  attributeId Int
+  attribute   VariantAttribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  variantValues VariantAttributeValue[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([attributeId, value])
+}
+
+model VariantAttributeValue {
+  id Int @id @default(autoincrement())
+
+  variantId Int
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  attributeId Int
+  attribute   VariantAttribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  optionId Int
+  option   VariantAttributeOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, attributeId])
+}
+
+enum QuestionnaireAnswerType {
+  YES_NO
+  SINGLE_SELECT
+  MULTI_SELECT
+}
+
+model QuestionnaireAudience {
+  id           Int     @id @default(autoincrement())
+  code         String  @unique
+  name         String
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
+
+  itemMappings QuestionnaireItemAudience[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model QuestionnaireSection {
+  id           Int     @id @default(autoincrement())
+  code         String  @unique
+  name         String
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
+
+  items QuestionnaireItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model QuestionnaireItem {
+  id Int @id @default(autoincrement())
+
+  code         String @unique
+  name         String
+  questionText String
+
+  answerType QuestionnaireAnswerType
+
+  displayOrder Int     @default(0)
+  isRequired   Boolean @default(true)
+  isActive     Boolean @default(true)
+
+  applyToAllProducts Boolean @default(true)
+
+  sectionId Int
+  section   QuestionnaireSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  categoryId Int?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  options QuestionnaireOption[]
+
+  productMappings QuestionnaireItemProduct[]
+
+  audiences QuestionnaireItemAudience[]
+
+  conditions QuestionnaireCondition[] @relation("ConditionalItem")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model QuestionnaireOption {
+  id Int @id @default(autoincrement())
+
+  label String
+  value String
+
+  deductionPercent Decimal @default(0) @db.Decimal(5, 2)
+
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
+
+  itemId Int
+  item   QuestionnaireItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  dependentConditions QuestionnaireCondition[]
+
+  deductionRules QuestionnaireDeductionRule[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([itemId, value])
+}
+
+model QuestionnaireItemAudience {
+  id Int @id @default(autoincrement())
+
+  itemId Int
+  item   QuestionnaireItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  audienceId Int
+  audience   QuestionnaireAudience @relation(fields: [audienceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([itemId, audienceId])
+}
+
+model QuestionnaireItemProduct {
+  id Int @id @default(autoincrement())
+
+  itemId Int
+  item   QuestionnaireItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([itemId, productId])
+}
+
+model QuestionnaireCondition {
+  id Int @id @default(autoincrement())
+
+  itemId Int
+  item   QuestionnaireItem @relation("ConditionalItem", fields: [itemId], references: [id], onDelete: Cascade)
+
+  dependsOnOptionId Int
+  dependsOnOption   QuestionnaireOption @relation(fields: [dependsOnOptionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([itemId, dependsOnOptionId])
+}
+
+model QuestionnaireDeductionRule {
+  id Int @id @default(autoincrement())
+
+  optionId Int
+  option   QuestionnaireOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  deductionPercent Decimal @db.Decimal(5, 2)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([optionId, productId])
+  @@index([productId])
+  @@index([optionId])
+}
+
+model ProductSeries {
+  id           Int     @id @default(autoincrement())
+  name         String
+  slug         String
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
+
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  brandId Int
+  brand   Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  products Product[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([categoryId, brandId, slug])
+  @@index([categoryId])
+  @@index([brandId])
+}
+
+
+model SiteSetting {
+  id Int @id @default(autoincrement())
+
+  companyName String @default("CELLTRO")
+  tagline     String? @default("Sell Smart. Sell Easy.")
+
+  supportPhone    String?
+  whatsappNumber  String?
+  supportEmail    String?
+  businessEmail   String?
+
+  officeAddress String?
+  city          String?
+  state         String?
+  pincode       String?
+
+  businessHours String?
+
+  facebookUrl  String?
+  instagramUrl String?
+  linkedinUrl  String?
+  youtubeUrl   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+
+model TermsSection {
+  id           Int      @id @default(autoincrement())
+  title        String
+  content      String
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+
+enum PartnerType {
+  BUYBACK_VENDOR
+  PICKUP_PARTNER
+  BUSINESS_PARTNER
+}
+
+enum PartnerLeadStatus {
+  NEW
+  CONTACTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model PartnerLead {
+  id Int @id @default(autoincrement())
+
+  fullName     String
+  businessName String?
+  mobile       String
+  email        String?
+  partnerType  PartnerType
+
+  city            String
+  pincode         String
+  businessAddress String?
+
+  gstNumber String?
+  message   String?
+
+  status PartnerLeadStatus @default(NEW)
+
+  adminNotes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([partnerType])
+  @@index([mobile])
+  @@index([pincode])
+  @@index([createdAt])
+}
+
+enum ContactLeadStatus {
+  NEW
+  CONTACTED
+  RESOLVED
+  CLOSED
+}
+
+model ContactLead {
+  id Int @id @default(autoincrement())
+
+  fullName String
+  mobile   String
+  email    String?
+
+  subject String?
+  message String
+
+  status ContactLeadStatus @default(NEW)
+
+  adminNotes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([mobile])
+  @@index([createdAt])
+}
