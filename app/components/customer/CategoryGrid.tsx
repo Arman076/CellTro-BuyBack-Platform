@@ -104,10 +104,9 @@ export default function CategoryGrid({
 
             return (
               <Link
-                key={category.id}
-                href={`/sell/${category.slug}`}
-                className="category-card"
-              >
+  href={`/sell/${category.slug}`}
+  className="category-card customer-premium-card"
+              key={category.id}>
                 <div className="category-icon">
                   <Icon size={36} strokeWidth={1.7} />
                 </div>

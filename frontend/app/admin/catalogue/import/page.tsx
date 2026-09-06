@@ -7,7 +7,13 @@ import {
   useState,
 } from 'react';
 
-import { API_BASE_URL } from '@/lib/api';
+import {
+  ExternalLink,
+} from 'lucide-react';
+
+import {
+  API_BASE_URL,
+} from '@/lib/api';
 
 interface Category {
   id: number;
@@ -19,29 +25,47 @@ interface Category {
 type ImportStatus =
   | 'NEW_MODEL'
   | 'NEW_VARIANT'
+  | 'MODEL_UPDATE'
   | 'PRICE_UPDATE'
   | 'NO_CHANGE'
   | 'INVALID';
 
 interface ValidationRow {
   rowNumber: number;
+
   brand: string;
+
+  series:
+    string | null;
+
   model: string;
 
-  attributes: Record<
-    string,
-    string
-  >;
+  attributes:
+    Record<
+      string,
+      string
+    >;
 
-  basePrice: number | null;
-  active: boolean;
+  basePrice:
+    number | null;
 
-  status: ImportStatus;
+  imageUrl:
+    string | null;
 
-  oldPrice?: number;
-  newPrice?: number;
+  active:
+    boolean;
 
-  message: string;
+  status:
+    ImportStatus;
+
+  oldPrice?:
+    number;
+
+  newPrice?:
+    number;
+
+  message:
+    string;
 }
 
 interface ValidationResponse {
@@ -52,21 +76,35 @@ interface ValidationResponse {
 
   summary: {
     totalRows: number;
+
     validRows: number;
+
     invalidRows: number;
+
     newModels: number;
+
     newVariants: number;
+
+    modelUpdates: number;
+
     priceUpdates: number;
+
     noChange: number;
   };
 
-  rows: ValidationRow[];
+  rows:
+    ValidationRow[];
 }
 
 interface ImportResult {
   createdModels: number;
+
+  updatedModels: number;
+
   createdVariants: number;
+
   updatedVariants: number;
+
   skippedNoChange: number;
 }
 
@@ -74,17 +112,26 @@ export default function CatalogueImportPage() {
   const [
     categories,
     setCategories,
-  ] = useState<Category[]>([]);
+  ] =
+    useState<Category[]>(
+      [],
+    );
 
   const [
     categoryId,
     setCategoryId,
-  ] = useState<number>(0);
+  ] =
+    useState<number>(
+      0,
+    );
 
   const [
     selectedFile,
     setSelectedFile,
-  ] = useState<File | null>(null);
+  ] =
+    useState<File | null>(
+      null,
+    );
 
   const [
     validation,
@@ -97,32 +144,50 @@ export default function CatalogueImportPage() {
   const [
     loadingCategories,
     setLoadingCategories,
-  ] = useState(true);
+  ] =
+    useState(
+      true,
+    );
 
   const [
     downloading,
     setDownloading,
-  ] = useState(false);
+  ] =
+    useState(
+      false,
+    );
 
   const [
     validating,
     setValidating,
-  ] = useState(false);
-
-  const [
-    error,
-    setError,
-  ] = useState('');
+  ] =
+    useState(
+      false,
+    );
 
   const [
     confirming,
     setConfirming,
-  ] = useState(false);
+  ] =
+    useState(
+      false,
+    );
+
+  const [
+    error,
+    setError,
+  ] =
+    useState(
+      '',
+    );
 
   const [
     importResult,
     setImportResult,
-  ] = useState<ImportResult | null>(null);
+  ] =
+    useState<ImportResult | null>(
+      null,
+    );
 
   useEffect(() => {
     const loadCategories =
@@ -132,7 +197,9 @@ export default function CatalogueImportPage() {
             true,
           );
 
-          setError('');
+          setError(
+            '',
+          );
 
           const response =
             await fetch(
@@ -143,7 +210,9 @@ export default function CatalogueImportPage() {
               },
             );
 
-          if (!response.ok) {
+          if (
+            !response.ok
+          ) {
             throw new Error(
               'Unable to load categories',
             );
@@ -155,7 +224,9 @@ export default function CatalogueImportPage() {
 
           const activeCategories =
             data.filter(
-              (category) =>
+              (
+                category,
+              ) =>
                 category.isActive,
             );
 
@@ -168,13 +239,17 @@ export default function CatalogueImportPage() {
             0
           ) {
             setCategoryId(
-              activeCategories[0]
-                .id,
+              activeCategories[
+                0
+              ].id,
             );
           }
-        } catch (err) {
+        } catch (
+          err
+        ) {
           setError(
-            err instanceof Error
+            err instanceof
+              Error
               ? err.message
               : 'Unable to load categories',
           );
@@ -190,7 +265,9 @@ export default function CatalogueImportPage() {
 
   const downloadTemplate =
     async () => {
-      if (!categoryId) {
+      if (
+        !categoryId
+      ) {
         setError(
           'Please select a category',
         );
@@ -199,20 +276,28 @@ export default function CatalogueImportPage() {
       }
 
       try {
-        setDownloading(true);
-        setError('');
+        setDownloading(
+          true,
+        );
+
+        setError(
+          '',
+        );
 
         const response =
           await fetch(
             `${API_BASE_URL}/catalogue-import/template/${categoryId}`,
           );
 
-        if (!response.ok) {
+        if (
+          !response.ok
+        ) {
           const data =
             await response
               .json()
               .catch(
-                () => null,
+                () =>
+                  null,
               );
 
           throw new Error(
@@ -242,7 +327,9 @@ export default function CatalogueImportPage() {
             /filename="(.+)"/,
           );
 
-        if (match?.[1]) {
+        if (
+          match?.[1]
+        ) {
           fileName =
             match[1];
         }
@@ -252,7 +339,9 @@ export default function CatalogueImportPage() {
             'a',
           );
 
-        anchor.href = url;
+        anchor.href =
+          url;
+
         anchor.download =
           fileName;
 
@@ -261,19 +350,25 @@ export default function CatalogueImportPage() {
         );
 
         anchor.click();
+
         anchor.remove();
 
         window.URL.revokeObjectURL(
           url,
         );
-      } catch (err) {
+      } catch (
+        err
+      ) {
         setError(
-          err instanceof Error
+          err instanceof
+            Error
             ? err.message
             : 'Template download failed',
         );
       } finally {
-        setDownloading(false);
+        setDownloading(
+          false,
+        );
       }
     };
 
@@ -282,18 +377,33 @@ export default function CatalogueImportPage() {
       ChangeEvent<HTMLInputElement>,
   ) => {
     const file =
-      event.target.files?.[0] ??
+      event.target.files?.[
+        0
+      ] ??
       null;
 
-    setSelectedFile(file);
-    setValidation(null);
-    setImportResult(null);
-    setError('');
+    setSelectedFile(
+      file,
+    );
+
+    setValidation(
+      null,
+    );
+
+    setImportResult(
+      null,
+    );
+
+    setError(
+      '',
+    );
   };
 
   const validateFile =
     async () => {
-      if (!categoryId) {
+      if (
+        !categoryId
+      ) {
         setError(
           'Please select a category',
         );
@@ -301,7 +411,9 @@ export default function CatalogueImportPage() {
         return;
       }
 
-      if (!selectedFile) {
+      if (
+        !selectedFile
+      ) {
         setError(
           'Please select an Excel file',
         );
@@ -310,10 +422,21 @@ export default function CatalogueImportPage() {
       }
 
       try {
-        setValidating(true);
-        setError('');
-        setValidation(null);
-        setImportResult(null);
+        setValidating(
+          true,
+        );
+
+        setError(
+          '',
+        );
+
+        setValidation(
+          null,
+        );
+
+        setImportResult(
+          null,
+        );
 
         const formData =
           new FormData();
@@ -327,15 +450,20 @@ export default function CatalogueImportPage() {
           await fetch(
             `${API_BASE_URL}/catalogue-import/validate/${categoryId}`,
             {
-              method: 'POST',
-              body: formData,
+              method:
+                'POST',
+
+              body:
+                formData,
             },
           );
 
         const data =
           await response.json();
 
-        if (!response.ok) {
+        if (
+          !response.ok
+        ) {
           throw new Error(
             Array.isArray(
               data.message,
@@ -348,47 +476,42 @@ export default function CatalogueImportPage() {
           );
         }
 
-        setValidation(data);
-      } catch (err) {
+        setValidation(
+          data,
+        );
+      } catch (
+        err
+      ) {
         setError(
-          err instanceof Error
+          err instanceof
+            Error
             ? err.message
             : 'Validation failed',
         );
       } finally {
-        setValidating(false);
+        setValidating(
+          false,
+        );
       }
     };
 
-
   const confirmImport =
     async () => {
-      if (!categoryId) {
+      if (
+        !categoryId ||
+        !selectedFile ||
+        !validation
+      ) {
         setError(
-          'Please select a category',
-        );
-
-        return;
-      }
-
-      if (!selectedFile) {
-        setError(
-          'Please select an Excel file',
-        );
-
-        return;
-      }
-
-      if (!validation) {
-        setError(
-          'Please validate the Excel file first',
+          'Validate the Excel file first.',
         );
 
         return;
       }
 
       if (
-        validation.summary.invalidRows >
+        validation.summary
+          .invalidRows >
         0
       ) {
         setError(
@@ -400,17 +523,27 @@ export default function CatalogueImportPage() {
 
       const approved =
         window.confirm(
-          'Confirm catalogue import? New models and variants will be created and existing prices may be updated.',
+          'Confirm catalogue import? Models, Series mapping, Image URL, variants and prices may be created or updated.',
         );
 
-      if (!approved) {
+      if (
+        !approved
+      ) {
         return;
       }
 
       try {
-        setConfirming(true);
-        setError('');
-        setImportResult(null);
+        setConfirming(
+          true,
+        );
+
+        setError(
+          '',
+        );
+
+        setImportResult(
+          null,
+        );
 
         const formData =
           new FormData();
@@ -424,103 +557,135 @@ export default function CatalogueImportPage() {
           await fetch(
             `${API_BASE_URL}/catalogue-import/confirm/${categoryId}`,
             {
-              method: 'POST',
-              body: formData,
+              method:
+                'POST',
+
+              body:
+                formData,
             },
           );
 
         const data =
           await response.json();
 
-        if (!response.ok) {
+        if (
+          !response.ok
+        ) {
           const message =
             typeof data?.message ===
             'string'
               ? data.message
-              : data?.message?.message ??
+              : data?.message
+                    ?.message ??
                 'Catalogue import failed';
 
-          throw new Error(message);
+          throw new Error(
+            message,
+          );
         }
 
         setImportResult(
-          data.summary as ImportResult,
+          data.summary,
         );
 
-        const revalidateForm =
+        /*
+         * Revalidate after import
+         */
+        const refreshData =
           new FormData();
 
-        revalidateForm.append(
+        refreshData.append(
           'file',
           selectedFile,
         );
 
-        const revalidateResponse =
+        const refreshedResponse =
           await fetch(
             `${API_BASE_URL}/catalogue-import/validate/${categoryId}`,
             {
-              method: 'POST',
-              body: revalidateForm,
+              method:
+                'POST',
+
+              body:
+                refreshData,
             },
           );
 
         if (
-          revalidateResponse.ok
+          refreshedResponse.ok
         ) {
-          const refreshed =
-            await revalidateResponse.json();
-
-          setValidation(refreshed);
+          setValidation(
+            await refreshedResponse.json(),
+          );
         }
-      } catch (err) {
+      } catch (
+        err
+      ) {
         setError(
-          err instanceof Error
+          err instanceof
+            Error
             ? err.message
             : 'Catalogue import failed',
         );
       } finally {
-        setConfirming(false);
+        setConfirming(
+          false,
+        );
       }
     };
 
   const attributeNames =
-    useMemo(() => {
-      if (
-        !validation ||
-        validation.rows.length ===
-          0
-      ) {
-        return [];
-      }
-
-      const names =
-        new Set<string>();
-
-      for (
-        const row of
-        validation.rows
-      ) {
-        for (
-          const key of
-          Object.keys(
-            row.attributes,
-          )
+    useMemo(
+      () => {
+        if (
+          !validation ||
+          validation.rows
+            .length ===
+            0
         ) {
-          names.add(key);
+          return [];
         }
-      }
 
-      return Array.from(names);
-    }, [validation]);
+        const names =
+          new Set<string>();
 
-  const getStatusStyle = (
-    status: ImportStatus,
-  ) => {
-    switch (status) {
+        for (
+          const row
+          of validation.rows
+        ) {
+          for (
+            const key
+            of Object.keys(
+              row.attributes,
+            )
+          ) {
+            names.add(
+              key,
+            );
+          }
+        }
+
+        return Array.from(
+          names,
+        );
+      },
+      [
+        validation,
+      ],
+    );
+
+  function getStatusStyle(
+    status:
+      ImportStatus,
+  ) {
+    switch (
+      status
+    ) {
       case 'NEW_MODEL':
         return {
           background:
             '#ede9fe',
+
           color:
             '#5b21b6',
         };
@@ -529,14 +694,25 @@ export default function CatalogueImportPage() {
         return {
           background:
             '#dcfce7',
+
           color:
             '#166534',
+        };
+
+      case 'MODEL_UPDATE':
+        return {
+          background:
+            '#dbeafe',
+
+          color:
+            '#1d4ed8',
         };
 
       case 'PRICE_UPDATE':
         return {
           background:
             '#fef3c7',
+
           color:
             '#92400e',
         };
@@ -545,6 +721,7 @@ export default function CatalogueImportPage() {
         return {
           background:
             '#e0f2fe',
+
           color:
             '#075985',
         };
@@ -553,125 +730,57 @@ export default function CatalogueImportPage() {
         return {
           background:
             '#fee2e2',
+
           color:
             '#991b1b',
         };
     }
-  };
+  }
 
   return (
-    <div
-      style={{
-        padding: '24px',
-        maxWidth: '1600px',
-        margin: '0 auto',
-      }}
-    >
-      <div
-        style={{
-          marginBottom: '26px',
-        }}
-      >
-        <h1
-          style={{
-            fontSize: '28px',
-            fontWeight: 700,
-            marginBottom: '8px',
-          }}
-        >
+    <div className="mx-auto max-w-[1600px] p-4 md:p-6">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold md:text-3xl">
           Catalogue Import
         </h1>
 
-        <p
-          style={{
-            color: '#6b7280',
-            margin: 0,
-          }}
-        >
-          Bulk create models,
-          variants and update base
-          prices using Excel.
+        <p className="mt-1 text-sm text-gray-500">
+          Bulk upload models,
+          Series, variants,
+          Base Price and S3 /
+          CloudFront Image URLs
+          using Excel.
         </p>
       </div>
 
       {error && (
-        <div
-          style={{
-            padding: '14px 16px',
-            marginBottom: '20px',
-            borderRadius: '10px',
-            background: '#fee2e2',
-            border:
-              '1px solid #fecaca',
-            color: '#991b1b',
-          }}
-        >
+        <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
-      <div
-        style={{
-          border:
-            '1px solid #e5e7eb',
-          borderRadius: '14px',
-          padding: '22px',
-          marginBottom: '20px',
-          background: '#ffffff',
-        }}
-      >
-        <h2
-          style={{
-            fontSize: '18px',
-            fontWeight: 600,
-            marginTop: 0,
-            marginBottom: '6px',
-          }}
-        >
+      <section className="mb-5 rounded-2xl border bg-white p-5 shadow-sm">
+        <h2 className="text-lg font-semibold">
           1. Select Category
         </h2>
 
-        <p
-          style={{
-            color: '#6b7280',
-            fontSize: '14px',
-            marginTop: 0,
-            marginBottom: '18px',
-          }}
-        >
-          Excel columns will be
-          generated automatically
-          according to the selected
-          category attributes.
+        <p className="mt-1 text-sm text-gray-500">
+          Excel columns are
+          generated dynamically
+          based on the selected
+          category.
         </p>
 
-        <div
-          style={{
-            display: 'flex',
-            gap: '12px',
-            flexWrap: 'wrap',
-            alignItems: 'end',
-          }}
-        >
-          <div
-            style={{
-              minWidth: '260px',
-              flex: 1,
-            }}
-          >
-            <label
-              style={{
-                display: 'block',
-                fontWeight: 600,
-                marginBottom: '7px',
-                fontSize: '14px',
-              }}
-            >
+        <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-end">
+          <div className="flex-1">
+            <label className="mb-1.5 block text-sm font-medium">
               Category
             </label>
 
             <select
-              value={categoryId}
+              value={
+                categoryId
+              }
               disabled={
                 loadingCategories
               }
@@ -689,28 +798,24 @@ export default function CatalogueImportPage() {
                   null,
                 );
 
-                setValidation(null);
-                setImportResult(null);
-                setError('');
+                setValidation(
+                  null,
+                );
+
+                setImportResult(
+                  null,
+                );
               }}
-              style={{
-                width: '100%',
-                padding:
-                  '11px 12px',
-                border:
-                  '1px solid #d1d5db',
-                borderRadius: '8px',
-                background:
-                  '#ffffff',
-                outline: 'none',
-              }}
+              className="w-full rounded-xl border px-3 py-2.5"
             >
               <option value={0}>
-                Select category
+                Select Category
               </option>
 
               {categories.map(
-                (category) => (
+                (
+                  category,
+                ) => (
                   <option
                     key={
                       category.id
@@ -737,79 +842,47 @@ export default function CatalogueImportPage() {
               !categoryId ||
               downloading
             }
-            style={{
-              padding:
-                '11px 18px',
-              minHeight: '42px',
-              border: 0,
-              borderRadius: '8px',
-              cursor:
-                downloading
-                  ? 'not-allowed'
-                  : 'pointer',
-              fontWeight: 600,
-              background:
-                '#111827',
-              color: '#ffffff',
-              opacity:
-                !categoryId ||
-                downloading
-                  ? 0.6
-                  : 1,
-            }}
+            className="rounded-xl bg-gray-900 px-5 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             {downloading
               ? 'Downloading...'
               : 'Download Excel Template'}
           </button>
         </div>
-      </div>
 
-      <div
-        style={{
-          border:
-            '1px solid #e5e7eb',
-          borderRadius: '14px',
-          padding: '22px',
-          marginBottom: '20px',
-          background: '#ffffff',
-        }}
-      >
-        <h2
-          style={{
-            fontSize: '18px',
-            fontWeight: 600,
-            marginTop: 0,
-            marginBottom: '6px',
-          }}
-        >
+        <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+          Excel format:
+          <strong>
+            {' '}
+            Brand | Series |
+            Model | Dynamic
+            Attributes | Base
+            Price | Image URL |
+            Active
+          </strong>
+
+          <div className="mt-1 text-xs text-blue-700">
+            Example for Mobile:
+            Brand | Series |
+            Model | RAM |
+            Storage | Base Price
+            | Image URL | Active
+          </div>
+        </div>
+      </section>
+
+      <section className="mb-5 rounded-2xl border bg-white p-5 shadow-sm">
+        <h2 className="text-lg font-semibold">
           2. Upload Catalogue
         </h2>
 
-        <p
-          style={{
-            color: '#6b7280',
-            fontSize: '14px',
-            marginTop: 0,
-            marginBottom: '18px',
-          }}
-        >
+        <p className="mt-1 text-sm text-gray-500">
           Upload the completed
-          Excel file to check new
-          models, variants, pricing
-          changes and invalid data.
+          Excel file and validate
+          it before importing.
         </p>
 
-        <div
-          style={{
-            border:
-              '2px dashed #d1d5db',
-            borderRadius: '14px',
-            padding: '28px 20px',
-            textAlign: 'center',
-            background: '#f9fafb',
-          }}
-        >
+        <div className="mt-5 rounded-2xl border-2 border-dashed border-gray-300 bg-gray-50 p-8 text-center">
           <input
             id="catalogue-file"
             type="file"
@@ -817,116 +890,47 @@ export default function CatalogueImportPage() {
             onChange={
               handleFileChange
             }
-            style={{
-              display: 'none',
-            }}
+            className="hidden"
           />
 
-          <div
-            style={{
-              fontSize: '38px',
-              marginBottom: '8px',
-            }}
-          >
-            📄
+          <div className="text-lg font-semibold">
+            Upload Catalogue
+            Excel
           </div>
 
-          <div
-            style={{
-              fontSize: '16px',
-              fontWeight: 700,
-              marginBottom: '5px',
-            }}
-          >
-            Upload Catalogue Excel
-          </div>
-
-          <div
-            style={{
-              color: '#6b7280',
-              fontSize: '13px',
-              marginBottom: '16px',
-            }}
-          >
-            XLSX or XLS files up
-            to 10 MB
-          </div>
+          <p className="mt-1 text-sm text-gray-500">
+            XLSX or XLS
+          </p>
 
           <label
             htmlFor="catalogue-file"
-            style={{
-              display:
-                'inline-block',
-              padding:
-                '10px 20px',
-              background:
-                '#2563eb',
-              color: '#ffffff',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: '14px',
-            }}
+            className="mt-4 inline-block cursor-pointer rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white"
           >
             Choose Excel File
           </label>
 
           {selectedFile && (
-            <div
-              style={{
-                margin:
-                  '18px auto 0',
-                maxWidth: '520px',
-                background:
-                  '#ffffff',
-                border:
-                  '1px solid #e5e7eb',
-                padding:
-                  '12px 14px',
-                borderRadius:
-                  '10px',
-                textAlign: 'left',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: '12px',
-                  color:
-                    '#6b7280',
-                  marginBottom:
-                    '4px',
-                }}
-              >
-                Selected file
-              </div>
+            <div className="mx-auto mt-5 max-w-lg rounded-xl border bg-white p-4 text-left">
+              <p className="text-xs text-gray-500">
+                Selected File
+              </p>
 
-              <div
-                style={{
-                  fontWeight: 600,
-                  wordBreak:
-                    'break-word',
-                }}
-              >
+              <p className="mt-1 break-all font-semibold">
                 {
                   selectedFile.name
                 }
-              </div>
+              </p>
 
-              <div
-                style={{
-                  color:
-                    '#6b7280',
-                  fontSize: '12px',
-                  marginTop: '3px',
-                }}
-              >
+              <p className="mt-1 text-xs text-gray-500">
                 {(
                   selectedFile.size /
                   1024 /
                   1024
-                ).toFixed(2)}{' '}
+                ).toFixed(
+                  2,
+                )}{' '}
                 MB
-              </div>
+              </p>
             </div>
           )}
         </div>
@@ -941,83 +945,23 @@ export default function CatalogueImportPage() {
             !categoryId ||
             validating
           }
-          style={{
-            marginTop: '18px',
-            padding:
-              '11px 22px',
-            border: 0,
-            borderRadius: '8px',
-            cursor:
-              !selectedFile ||
-              validating
-                ? 'not-allowed'
-                : 'pointer',
-            fontWeight: 600,
-            background:
-              '#16a34a',
-            color: '#ffffff',
-            opacity:
-              !selectedFile ||
-              !categoryId ||
-              validating
-                ? 0.6
-                : 1,
-          }}
+          className="mt-5 rounded-xl bg-green-600 px-5 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           {validating
             ? 'Validating Excel...'
             : 'Validate Catalogue'}
         </button>
-      </div>
+      </section>
 
       {validation && (
         <>
-          <div
-            style={{
-              marginBottom:
-                '12px',
-            }}
-          >
-            <h2
-              style={{
-                fontSize: '20px',
-                fontWeight: 700,
-                marginBottom:
-                  '4px',
-              }}
-            >
-              Validation Summary
-            </h2>
+          <h2 className="mb-3 text-xl font-bold">
+            Validation Summary
+          </h2>
 
-            <div
-              style={{
-                color:
-                  '#6b7280',
-                fontSize: '14px',
-              }}
-            >
-              Category:{' '}
-              <strong>
-                {
-                  validation
-                    .category.name
-                }
-              </strong>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns:
-                'repeat(auto-fit, minmax(145px, 1fr))',
-              gap: '12px',
-              marginBottom:
-                '20px',
-            }}
-          >
+          <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
             <SummaryCard
-              title="Total Rows"
+              title="Total"
               value={
                 validation
                   .summary
@@ -1062,6 +1006,15 @@ export default function CatalogueImportPage() {
             />
 
             <SummaryCard
+              title="Model Updates"
+              value={
+                validation
+                  .summary
+                  .modelUpdates
+              }
+            />
+
+            <SummaryCard
               title="Price Updates"
               value={
                 validation
@@ -1080,49 +1033,21 @@ export default function CatalogueImportPage() {
             />
           </div>
 
-          <div
-            style={{
-              border:
-                '1px solid #e5e7eb',
-              borderRadius: '14px',
-              padding: '18px',
-              marginBottom: '20px',
-              background:
-                '#ffffff',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                gap: '14px',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                justifyContent:
-                  'space-between',
-              }}
-            >
+          <section className="mb-5 rounded-2xl border bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>
-                <h2
-                  style={{
-                    fontSize: '18px',
-                    fontWeight: 600,
-                    marginTop: 0,
-                    marginBottom: '5px',
-                  }}
-                >
-                  3. Confirm Import
+                <h2 className="text-lg font-semibold">
+                  3. Confirm
+                  Import
                 </h2>
 
-                <p
-                  style={{
-                    color: '#6b7280',
-                    fontSize: '14px',
-                    margin: 0,
-                  }}
-                >
-                  This will create new
-                  models and variants and
-                  update existing prices.
+                <p className="mt-1 text-sm text-gray-500">
+                  Creates new
+                  models/variants
+                  and updates
+                  existing prices,
+                  Series and Image
+                  URLs.
                 </p>
               </div>
 
@@ -1133,32 +1058,12 @@ export default function CatalogueImportPage() {
                 }
                 disabled={
                   confirming ||
-                  validation.summary
-                    .invalidRows > 0
+                  validation
+                    .summary
+                    .invalidRows >
+                    0
                 }
-                style={{
-                  padding:
-                    '11px 20px',
-                  border: 0,
-                  borderRadius: '8px',
-                  cursor:
-                    confirming ||
-                    validation.summary
-                      .invalidRows > 0
-                      ? 'not-allowed'
-                      : 'pointer',
-                  fontWeight: 600,
-                  background:
-                    validation.summary
-                      .invalidRows > 0
-                      ? '#9ca3af'
-                      : '#2563eb',
-                  color: '#ffffff',
-                  opacity:
-                    confirming
-                      ? 0.7
-                      : 1,
-                }}
+                className="rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:bg-gray-400"
               >
                 {confirming
                   ? 'Importing...'
@@ -1166,75 +1071,40 @@ export default function CatalogueImportPage() {
               </button>
             </div>
 
-            {validation.summary
-              .invalidRows > 0 && (
-              <div
-                style={{
-                  marginTop: '14px',
-                  padding:
-                    '11px 13px',
-                  borderRadius:
-                    '8px',
-                  background:
-                    '#fef2f2',
-                  border:
-                    '1px solid #fecaca',
-                  color:
-                    '#991b1b',
-                  fontSize:
-                    '13px',
-                }}
-              >
-                Confirm Import is
-                disabled because the
-                Excel file contains
-                invalid rows.
+            {validation
+              .summary
+              .invalidRows >
+              0 && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                Fix all INVALID
+                rows before
+                confirming the
+                import.
               </div>
             )}
-          </div>
+          </section>
 
           {importResult && (
-            <div
-              style={{
-                border:
-                  '1px solid #bbf7d0',
-                borderRadius:
-                  '14px',
-                padding: '18px',
-                marginBottom:
-                  '20px',
-                background:
-                  '#f0fdf4',
-              }}
-            >
-              <h2
-                style={{
-                  fontSize: '18px',
-                  fontWeight: 700,
-                  marginTop: 0,
-                  marginBottom:
-                    '14px',
-                  color:
-                    '#166534',
-                }}
-              >
+            <section className="mb-5 rounded-2xl border border-green-200 bg-green-50 p-5">
+              <h2 className="font-bold text-green-800">
                 Catalogue Imported
                 Successfully
               </h2>
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns:
-                    'repeat(auto-fit, minmax(150px, 1fr))',
-                  gap: '12px',
-                }}
-              >
+              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
                 <SummaryCard
                   title="Models Created"
                   value={
                     importResult
                       .createdModels
+                  }
+                />
+
+                <SummaryCard
+                  title="Models Updated"
+                  value={
+                    importResult
+                      .updatedModels
                   }
                 />
 
@@ -1262,62 +1132,28 @@ export default function CatalogueImportPage() {
                   }
                 />
               </div>
-            </div>
+            </section>
           )}
 
-          <div
-            style={{
-              border:
-                '1px solid #e5e7eb',
-              borderRadius:
-                '14px',
-              overflow:
-                'hidden',
-              background:
-                '#ffffff',
-            }}
-          >
-            <div
-              style={{
-                padding: '18px',
-                borderBottom:
-                  '1px solid #e5e7eb',
-              }}
-            >
-              <h2
-                style={{
-                  fontSize:
-                    '18px',
-                  fontWeight: 600,
-                  margin: 0,
-                }}
-              >
+          <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+            <div className="border-b p-5">
+              <h2 className="text-lg font-semibold">
                 Validation Preview
               </h2>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Review Series,
+                model,
+                attributes,
+                price and image
+                before importing.
+              </p>
             </div>
 
-            <div
-              style={{
-                overflowX:
-                  'auto',
-              }}
-            >
-              <table
-                style={{
-                  width: '100%',
-                  borderCollapse:
-                    'collapse',
-                  minWidth:
-                    '1150px',
-                }}
-              >
-                <thead>
-                  <tr
-                    style={{
-                      background:
-                        '#f9fafb',
-                    }}
-                  >
+            <div className="overflow-x-auto">
+              <table className="min-w-[1400px] w-full border-collapse">
+                <thead className="bg-gray-50">
+                  <tr>
                     <TableHeader>
                       Row
                     </TableHeader>
@@ -1327,17 +1163,25 @@ export default function CatalogueImportPage() {
                     </TableHeader>
 
                     <TableHeader>
+                      Series
+                    </TableHeader>
+
+                    <TableHeader>
                       Model
                     </TableHeader>
 
                     {attributeNames.map(
-                      (name) => (
+                      (
+                        name,
+                      ) => (
                         <TableHeader
                           key={
                             name
                           }
                         >
-                          {name}
+                          {
+                            name
+                          }
                         </TableHeader>
                       ),
                     )}
@@ -1355,6 +1199,10 @@ export default function CatalogueImportPage() {
                     </TableHeader>
 
                     <TableHeader>
+                      Image URL
+                    </TableHeader>
+
+                    <TableHeader>
                       Status
                     </TableHeader>
 
@@ -1366,15 +1214,14 @@ export default function CatalogueImportPage() {
 
                 <tbody>
                   {validation.rows.map(
-                    (row) => (
+                    (
+                      row,
+                    ) => (
                       <tr
                         key={
                           row.rowNumber
                         }
-                        style={{
-                          borderTop:
-                            '1px solid #e5e7eb',
-                        }}
+                        className="border-t"
                       >
                         <TableCell>
                           {
@@ -1388,12 +1235,19 @@ export default function CatalogueImportPage() {
                         </TableCell>
 
                         <TableCell>
+                          {row.series ||
+                            '-'}
+                        </TableCell>
+
+                        <TableCell>
                           {row.model ||
                             '-'}
                         </TableCell>
 
                         {attributeNames.map(
-                          (name) => (
+                          (
+                            name,
+                          ) => (
                             <TableCell
                               key={
                                 name
@@ -1438,24 +1292,35 @@ export default function CatalogueImportPage() {
                         </TableCell>
 
                         <TableCell>
+                          {row.imageUrl ? (
+                            <a
+                              href={
+                                row.imageUrl
+                              }
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 font-medium text-blue-600 hover:underline"
+                            >
+                              View Image
+                              <ExternalLink
+                                size={
+                                  13
+                                }
+                              />
+                            </a>
+                          ) : (
+                            '-'
+                          )}
+                        </TableCell>
+
+                        <TableCell>
                           <span
                             style={{
                               ...getStatusStyle(
                                 row.status,
                               ),
-                              display:
-                                'inline-block',
-                              padding:
-                                '5px 10px',
-                              borderRadius:
-                                '999px',
-                              fontSize:
-                                '12px',
-                              fontWeight:
-                                700,
-                              whiteSpace:
-                                'nowrap',
                             }}
+                            className="inline-block whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold"
                           >
                             {
                               row.status
@@ -1464,9 +1329,11 @@ export default function CatalogueImportPage() {
                         </TableCell>
 
                         <TableCell>
-                          {
-                            row.message
-                          }
+                          <span className="whitespace-normal">
+                            {
+                              row.message
+                            }
+                          </span>
                         </TableCell>
                       </tr>
                     ),
@@ -1474,7 +1341,7 @@ export default function CatalogueImportPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </section>
         </>
       )}
     </div>
@@ -1489,33 +1356,14 @@ function SummaryCard({
   value: number;
 }) {
   return (
-    <div
-      style={{
-        border:
-          '1px solid #e5e7eb',
-        borderRadius: '12px',
-        padding: '16px',
-        background: '#ffffff',
-      }}
-    >
-      <div
-        style={{
-          color: '#6b7280',
-          fontSize: '13px',
-          marginBottom: '6px',
-        }}
-      >
+    <div className="rounded-xl border bg-white p-4">
+      <p className="text-xs text-gray-500">
         {title}
-      </div>
+      </p>
 
-      <div
-        style={{
-          fontSize: '26px',
-          fontWeight: 700,
-        }}
-      >
+      <p className="mt-1 text-2xl font-bold">
         {value}
-      </div>
+      </p>
     </div>
   );
 }
@@ -1523,20 +1371,11 @@ function SummaryCard({
 function TableHeader({
   children,
 }: {
-  children: React.ReactNode;
+  children:
+    React.ReactNode;
 }) {
   return (
-    <th
-      style={{
-        padding:
-          '12px 14px',
-        textAlign: 'left',
-        fontSize: '13px',
-        fontWeight: 600,
-        whiteSpace:
-          'nowrap',
-      }}
-    >
+    <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold text-gray-700">
       {children}
     </th>
   );
@@ -1545,22 +1384,12 @@ function TableHeader({
 function TableCell({
   children,
 }: {
-  children: React.ReactNode;
+  children:
+    React.ReactNode;
 }) {
   return (
-    <td
-      style={{
-        padding:
-          '12px 14px',
-        fontSize: '13px',
-        verticalAlign:
-          'top',
-        whiteSpace:
-          'nowrap',
-      }}
-    >
+    <td className="whitespace-nowrap px-4 py-3 text-sm align-top">
       {children}
     </td>
   );
 }
-

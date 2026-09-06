@@ -14,6 +14,8 @@ import {
   IndianRupee,
   MonitorCog,
   X,
+  Handshake,
+  MessageSquare,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -22,56 +24,34 @@ interface SidebarProps {
 }
 
 const menuItems = [
+  { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
+  { name: 'Categories', href: '/admin/catalogue/categories', icon: FolderTree },
+  { name: 'Brands', href: '/admin/catalogue/brands', icon: Tags },
+  { name: 'Models', href: '/admin/catalogue/models', icon: Smartphone },
+  { name: 'Variant Attributes', href: '/admin/catalogue/attributes', icon: Tags },
+  { name: 'RAM / Storage', href: '/admin/catalogue/variants', icon: Layers3 },
+  { name: 'Catalogue Upload', href: '/admin/catalogue/import', icon: Upload },
+  { name: 'Questionnaire', href: '/admin/questionnaire', icon: ClipboardList },
+  { name: 'Pricing', href: '/admin/pricing', icon: IndianRupee },
+
   {
-    name: 'Dashboard',
-    href: '/admin',
-    icon: LayoutDashboard,
+    name: 'Partner Applications',
+    href: '/admin/partner-applications',
+    icon: Handshake,
   },
-  {
-    name: 'Categories',
-    href: '/admin/catalogue/categories',
-    icon: FolderTree,
-  },
-  {
-    name: 'Brands',
-    href: '/admin/catalogue/brands',
-    icon: Tags,
-  },
-  {
-    name: 'Models',
-    href: '/admin/catalogue/models',
-    icon: Smartphone,
-  },
-  {
-  name: 'Variant Attributes',
-  href: '/admin/catalogue/attributes',
-  icon: Tags,
-},
-  {
-    name: 'RAM / Storage',
-    href: '/admin/catalogue/variants',
-    icon: Layers3,
-  },
-  {
-    name: 'Catalogue Upload',
-    href: '/admin/catalogue/import',
-    icon: Upload,
-  },
-  {
-    name: 'Questionnaire',
-    href: '/admin/questionnaire',
-    icon: ClipboardList,
-  },
-  {
-    name: 'Pricing',
-    href: '/admin/pricing',
-    icon: IndianRupee,
-  },
+
   {
     name: 'Website Display',
     href: '/admin/website-content',
     icon: MonitorCog,
   },
+
+  {
+  name: 'Contact Enquiries',
+  href: '/admin/contact-enquiries',
+  icon: MessageSquare,
+},
+
 ];
 
 export default function Sidebar({

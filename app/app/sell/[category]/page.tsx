@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import {
   ArrowLeft,
   ChevronRight,
+  Grid2X2,
 } from "lucide-react";
 
 import {
@@ -85,7 +86,7 @@ export default async function CategoryPage({
     );
 
   return (
-    <main className="sell-category-page">
+    <main className="sell-category-page customer-page-bg">
 
       <div className="sell-category-container">
 
@@ -99,17 +100,13 @@ export default async function CategoryPage({
             Home
           </Link>
 
-          <ChevronRight
-            size={14}
-          />
+          <ChevronRight size={14} />
 
           <Link href="/#sell-by-category">
             Sell Device
           </Link>
 
-          <ChevronRight
-            size={14}
-          />
+          <ChevronRight size={14} />
 
           <span>
             {category.name}
@@ -124,7 +121,6 @@ export default async function CategoryPage({
           className="category-back-link"
         >
           <ArrowLeft size={17} />
-
           All Categories
         </Link>
 
@@ -198,9 +194,7 @@ export default async function CategoryPage({
                 under {category.name}.
               </p>
 
-              <Link
-                href="/#sell-by-category"
-              >
+              <Link href="/#sell-by-category">
                 Choose Another Category
               </Link>
 
@@ -210,67 +204,92 @@ export default async function CategoryPage({
 
             <div className="customer-brand-grid">
 
-              {brands.map(
-                (brand) => {
+              {brands.map((brand) => {
 
-                  const initials =
-                    brand.name
-                      .split(" ")
-                      .map(
-                        (word) =>
-                          word[0],
-                      )
-                      .join("")
-                      .slice(0, 2)
-                      .toUpperCase();
+                const initials =
+                  brand.name
+                    .split(" ")
+                    .map((word) => word[0])
+                    .join("")
+                    .slice(0, 2)
+                    .toUpperCase();
 
-                  return (
-                    <Link
-                      key={brand.id}
-                      href={`/sell/${category.slug}/${brand.slug}`}
-                      className="customer-brand-card"
-                      aria-label={`Sell ${brand.name} ${category.name}`}
-                    >
+                return (
+                  <Link
+                    key={brand.id}
+                    href={`/sell/${category.slug}/${brand.slug}`}
+                    className="customer-brand-card customer-premium-card"
+                    aria-label={`Sell ${brand.name} ${category.name}`}
+                  >
 
-                      <div className="brand-logo-box">
+                    <div className="brand-logo-box">
 
-                        {brand.logoUrl ? (
-                          <img
-                            src={
-                              brand.logoUrl
-                            }
-                            alt={`${brand.name} logo`}
-                            loading="lazy"
-                          />
-                        ) : (
-                          <span className="brand-initials">
-                            {initials}
-                          </span>
-                        )}
-
-                      </div>
-
-                      <div className="brand-card-content">
-
-                        <strong>
-                          {brand.name}
-                        </strong>
-
-                        <span>
-                          View Models
+                      {brand.logoUrl ? (
+                        <img
+                          src={brand.logoUrl}
+                          alt={`${brand.name} logo`}
+                          loading="lazy"
+                        />
+                      ) : (
+                        <span className="brand-initials">
+                          {initials}
                         </span>
+                      )}
 
-                      </div>
+                    </div>
 
-                      <ChevronRight
-                        className="brand-card-arrow"
-                        size={19}
-                      />
+                    <div className="brand-card-content">
 
-                    </Link>
-                  );
-                },
-              )}
+                      <strong>
+                        {brand.name}
+                      </strong>
+
+                      <span>
+                        View Models
+                      </span>
+
+                    </div>
+
+                    <ChevronRight
+                      className="brand-card-arrow"
+                      size={19}
+                    />
+
+                  </Link>
+                );
+              })}
+
+
+              {/* ALWAYS LAST */}
+
+              <Link
+                href={`/sell/${category.slug}/all`}
+                className="customer-brand-card customer-premium-card all-brands-card"
+                aria-label={`View all ${category.name} models`}
+              >
+
+                <div className="brand-logo-box all-brands-logo-box">
+                  <Grid2X2 size={30} />
+                </div>
+
+                <div className="brand-card-content">
+
+                  <strong>
+                    All Brands
+                  </strong>
+
+                  <span>
+                    View All Models
+                  </span>
+
+                </div>
+
+                <ChevronRight
+                  className="brand-card-arrow"
+                  size={19}
+                />
+
+              </Link>
 
             </div>
 

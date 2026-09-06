@@ -1,17 +1,23 @@
 "use client";
 
 import Link from "next/link";
+
 import {
+  ChevronDown,
+  ChevronRight,
   LocateFixed,
   MapPin,
   Menu,
-  Search,
   UserRound,
   X,
-  ChevronRight,
 } from "lucide-react";
 
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState,
+} from "react";
+
+import DeviceSearch from "@/components/customer/DeviceSearch";
 
 type Category = {
   id: number;
@@ -21,28 +27,69 @@ type Category = {
   displayOrder: number;
 };
 
+type PincodePostOffice = {
+  Name?: string;
+  District?: string;
+  State?: string;
+  Division?: string;
+  Region?: string;
+};
+
+type PincodeResponse = {
+  Status?: string;
+  Message?: string;
+  PostOffice?: PincodePostOffice[] | null;
+};
+
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:4000";
 
 export default function CustomerHeader() {
-  const [location, setLocation] = useState("Choose Location");
-  const [locationOpen, setLocationOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [location, setLocation] =
+    useState("Choose Location");
 
-  const [manualLocation, setManualLocation] = useState("");
-  const [detecting, setDetecting] = useState(false);
+  const [locationOpen, setLocationOpen] =
+    useState(false);
 
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [menuOpen, setMenuOpen] =
+    useState(false);
+
+  const [manualLocation, setManualLocation] =
+    useState("");
+
+  const [detecting, setDetecting] =
+    useState(false);
+
+  const [savingLocation, setSavingLocation] =
+    useState(false);
+
+  const [categories, setCategories] =
+    useState<Category[]>([]);
+
+  const [
+    categoriesLoading,
+    setCategoriesLoading,
+  ] = useState(true);
+
+  /* =========================
+     LOAD SAVED LOCATION
+  ========================= */
 
   useEffect(() => {
     const savedLocation =
-      localStorage.getItem("customerLocation");
+      localStorage.getItem(
+        "customerLocation",
+      );
 
     if (savedLocation) {
       setLocation(savedLocation);
     }
   }, []);
+
+  /* =========================
+     LOAD CATEGORIES
+  ========================= */
 
   useEffect(() => {
     async function loadCategories() {
@@ -54,22 +101,29 @@ export default function CustomerHeader() {
         );
 
         if (!response.ok) {
-          throw new Error("Failed to load categories");
+          throw new Error(
+            "Failed to load categories",
+          );
         }
 
-        const data: Category[] = await response.json();
+        const data: Category[] =
+          await response.json();
 
         const activeCategories = data
-          .filter((category) => category.isActive)
+          .filter(
+            (category) =>
+              category.isActive,
+          )
           .sort(
             (a, b) =>
-              a.displayOrder - b.displayOrder,
+              a.displayOrder -
+              b.displayOrder,
           );
 
         setCategories(activeCategories);
       } catch (error) {
         console.error(
-          "Header category load error:",
+          "Header category error:",
           error,
         );
 
@@ -79,26 +133,121 @@ export default function CustomerHeader() {
       }
     }
 
-    loadCategories();
+    void loadCategories();
   }, []);
 
-  function saveLocation(value: string) {
-    const cleanValue = value.trim();
+  /* =========================
+     LOCK BODY SCROLL
+  ========================= */
 
-    if (!cleanValue) {
-      return;
+  useEffect(() => {
+    if (
+      menuOpen ||
+      locationOpen
+    ) {
+      document.body.style.overflow =
+        "hidden";
+    } else {
+      document.body.style.overflow = "";
     }
 
-    setLocation(cleanValue);
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [
+    menuOpen,
+    locationOpen,
+  ]);
+
+  /* =========================
+     STORE LOCATION
+  ========================= */
+
+  function storeLocation(
+    value: string,
+  ) {
+    setLocation(value);
 
     localStorage.setItem(
       "customerLocation",
-      cleanValue,
+      value,
     );
 
     setManualLocation("");
     setLocationOpen(false);
   }
+
+  /* =========================
+     REVERSE GEOCODING
+  ========================= */
+
+  async function reverseGeocode(
+    latitude: number,
+    longitude: number,
+  ) {
+    try {
+      const response = await fetch(
+        `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`,
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          "Reverse geocoding failed",
+        );
+      }
+
+      const data =
+        await response.json();
+
+      const possibleValues = [
+        data.locality,
+        data.city,
+        data.localityInfo
+          ?.administrative?.[2]
+          ?.name,
+        data.principalSubdivision,
+      ].filter(
+        (value): value is string =>
+          typeof value === "string" &&
+          value.trim().length > 0,
+      );
+
+      const uniqueValues =
+        possibleValues.filter(
+          (
+            value,
+            index,
+            array,
+          ) =>
+            array.findIndex(
+              (item) =>
+                item.toLowerCase() ===
+                value.toLowerCase(),
+            ) === index,
+        );
+
+      if (
+        uniqueValues.length === 0
+      ) {
+        return "Current Location";
+      }
+
+      return uniqueValues
+        .slice(0, 3)
+        .join(", ");
+    } catch (error) {
+      console.error(
+        "Reverse geocoding error:",
+        error,
+      );
+
+      return "Current Location";
+    }
+  }
+
+  /* =========================
+     CURRENT LOCATION
+  ========================= */
 
   function detectCurrentLocation() {
     if (!navigator.geolocation) {
@@ -112,32 +261,25 @@ export default function CustomerHeader() {
     setDetecting(true);
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const latitude =
-          position.coords.latitude.toFixed(4);
+      async (position) => {
+        const readableLocation =
+          await reverseGeocode(
+            position.coords.latitude,
+            position.coords.longitude,
+          );
 
-        const longitude =
-          position.coords.longitude.toFixed(4);
-
-        const detectedLocation =
-          `${latitude}, ${longitude}`;
-
-        setLocation(detectedLocation);
-
-        localStorage.setItem(
-          "customerLocation",
-          detectedLocation,
+        storeLocation(
+          readableLocation,
         );
 
         setDetecting(false);
-        setLocationOpen(false);
       },
 
       () => {
         setDetecting(false);
 
         alert(
-          "Location permission was not granted. Enter your city or pincode manually.",
+          "Location permission was not granted. Please enter your city or pincode manually.",
         );
       },
 
@@ -149,24 +291,161 @@ export default function CustomerHeader() {
     );
   }
 
+  /* =========================
+     PINCODE LOOKUP
+  ========================= */
+
+  async function saveLocation(
+    value: string,
+  ) {
+    const cleanValue =
+      value.trim();
+
+    if (!cleanValue) {
+      return;
+    }
+
+    /*
+      If user enters a six digit
+      Indian pincode, resolve it.
+    */
+
+    if (
+      /^\d{6}$/.test(
+        cleanValue,
+      )
+    ) {
+      try {
+        setSavingLocation(true);
+
+        const response = await fetch(
+          `https://api.postalpincode.in/pincode/${cleanValue}`,
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            "Pincode lookup failed",
+          );
+        }
+
+        const data: PincodeResponse[] =
+          await response.json();
+
+        const result =
+          data?.[0];
+
+        const offices =
+          result?.PostOffice;
+
+        if (
+          !offices ||
+          offices.length === 0
+        ) {
+          alert(
+            "Pincode not found. Please check and try again.",
+          );
+
+          return;
+        }
+
+        /*
+          Example 400037 can have
+          multiple post offices.
+
+          We collect first two unique
+          locality names so user sees
+          useful human-readable area.
+        */
+
+        const localityNames =
+          offices
+            .map(
+              (office) =>
+                office.Name?.trim(),
+            )
+            .filter(
+              (
+                name,
+              ): name is string =>
+                Boolean(name),
+            )
+            .filter(
+              (
+                name,
+                index,
+                array,
+              ) =>
+                array.findIndex(
+                  (item) =>
+                    item.toLowerCase() ===
+                    name.toLowerCase(),
+                ) === index,
+            )
+            .slice(0, 2);
+
+        const district =
+          offices[0]?.District?.trim();
+
+        const parts = [
+          ...localityNames,
+          district,
+        ].filter(Boolean);
+
+        const readableLocation =
+          `${parts.join(", ")} - ${cleanValue}`;
+
+        storeLocation(
+          readableLocation,
+        );
+      } catch (error) {
+        console.error(
+          "Pincode lookup error:",
+          error,
+        );
+
+        alert(
+          "Unable to resolve this pincode right now.",
+        );
+      } finally {
+        setSavingLocation(false);
+      }
+
+      return;
+    }
+
+    /*
+      User typed a city/locality
+      manually.
+    */
+
+    storeLocation(
+      cleanValue,
+    );
+  }
+
   return (
     <>
-      <header className="customer-header">
+      <header className="celtro-header">
 
-        {/* DESKTOP / MOBILE TOP ROW */}
+        {/* =====================
+            TOP ROW
+        ===================== */}
 
-        <div className="header-container">
+        <div className="celtro-header-main">
 
           <Link
             href="/"
-            className="customer-logo"
+            className="celtro-logo"
+            aria-label="CELLTRO Home"
           >
-            <span className="logo-mark">
+            <span className="celtro-logo-mark">
               C
             </span>
 
-            <span className="logo-text">
-              <strong>YourBrand</strong>
+            <span className="celtro-logo-copy">
+              <strong>
+                CELLTRO
+              </strong>
 
               <small>
                 Sell Smart. Sell Easy.
@@ -174,64 +453,76 @@ export default function CustomerHeader() {
             </span>
           </Link>
 
-          {/* Desktop Search */}
 
-          <div className="header-search">
-            <Search size={19} />
+          {/* DESKTOP SEARCH */}
 
-            <input
-              type="search"
-              placeholder="Search your device..."
-              aria-label="Search your device"
+          <div className="celtro-desktop-search">
+            <DeviceSearch
+              variant="header"
+              placeholder="Search for your device..."
             />
           </div>
 
-          {/* Desktop Actions */}
 
-          <div className="header-actions">
+          {/* ACTIONS */}
+
+          <div className="celtro-header-actions">
 
             <button
               type="button"
-              className="location-button desktop-location"
+              className="celtro-location-button"
               onClick={() =>
                 setLocationOpen(true)
               }
             >
-              <MapPin size={18} />
+              <MapPin size={17} />
 
               <span>
-                <small>Your Location</small>
-
-                <strong>
-                  {location}
-                </strong>
+                {location}
               </span>
+
+              <ChevronDown
+                size={15}
+              />
             </button>
+
 
             <Link
               href="/#sell-by-category"
-              className="sell-button"
+              className="celtro-sell-link"
             >
               Sell Device
+
+              <ChevronDown
+                size={14}
+              />
             </Link>
 
+
             <button
               type="button"
-              className="login-button"
+              className="celtro-login-button"
             >
-              <UserRound size={18} />
-              <span>Login</span>
+              <UserRound
+                size={17}
+              />
+
+              <span>
+                Login
+              </span>
             </button>
 
-            {/* MOBILE HAMBURGER */}
 
             <button
               type="button"
-              className="mobile-menu-button"
+              className="celtro-menu-button"
               onClick={() =>
                 setMenuOpen(true)
               }
               aria-label="Open menu"
+              aria-expanded={
+                menuOpen
+              }
             >
               <Menu size={23} />
             </button>
@@ -240,85 +531,92 @@ export default function CustomerHeader() {
 
         </div>
 
-        {/* MOBILE SEARCH */}
 
-        <div className="mobile-search">
+        {/* =====================
+            MOBILE SEARCH
+        ===================== */}
 
-          <Search size={18} />
-
-          <input
-            type="search"
+        <div className="celtro-mobile-device-search">
+          <DeviceSearch
+            variant="header"
             placeholder="Search phone, laptop, watch..."
-            aria-label="Search devices"
           />
-
         </div>
 
-        {/* MOBILE LOCATION + SELL ONLY */}
 
-        <div className="mobile-header-actions">
+        {/* =====================
+            MOBILE ACTIONS
+        ===================== */}
+
+        <div className="celtro-mobile-actions">
 
           <button
             type="button"
-            className="mobile-location-action"
+            className="celtro-mobile-location"
             onClick={() =>
               setLocationOpen(true)
             }
           >
-            <MapPin size={18} />
+            <MapPin size={17} />
 
             <span>
-              <small>
-                Your Location
-              </small>
-
-              <strong>
-                {location === "Choose Location"
-                  ? "Choose Location"
-                  : location}
-              </strong>
+              {location}
             </span>
           </button>
 
+
           <Link
             href="/#sell-by-category"
-            className="mobile-sell-action"
+            className="celtro-mobile-sell"
           >
             Sell Device
+
+            <ChevronRight
+              size={16}
+            />
           </Link>
 
         </div>
 
       </header>
 
-      {/* ======================
+
+      {/* =========================
           MOBILE MENU
-      ====================== */}
+      ========================= */}
 
       {menuOpen && (
         <div
-          className="mobile-menu-overlay"
+          className="celtro-menu-overlay"
           onClick={() =>
             setMenuOpen(false)
           }
         >
           <aside
-            className="mobile-menu-panel"
+            className="celtro-menu-panel"
             onClick={(event) =>
               event.stopPropagation()
             }
           >
-            <div className="mobile-menu-header">
 
-              <div>
+            <div className="celtro-menu-header">
+
+              <Link
+                href="/"
+                className="celtro-menu-logo"
+                onClick={() =>
+                  setMenuOpen(false)
+                }
+              >
                 <span>
-                  MENU
+                  C
                 </span>
 
-                <h2>
-                  Sell Your Device
-                </h2>
-              </div>
+                <strong>
+                  CELLTRO
+                </strong>
+              </Link>
+
 
               <button
                 type="button"
@@ -327,29 +625,44 @@ export default function CustomerHeader() {
                 }
                 aria-label="Close menu"
               >
-                <X size={21} />
+                <X size={22} />
               </button>
 
             </div>
 
-            <div className="mobile-menu-section-title">
-              Categories
+
+            <div className="celtro-menu-title">
+
+              <span>
+                SELL YOUR DEVICE
+              </span>
+
+              <h2>
+                Choose Category
+              </h2>
+
             </div>
 
-            <nav className="mobile-category-menu">
+
+            <nav
+              className="celtro-category-menu"
+              aria-label="Device categories"
+            >
 
               {categoriesLoading && (
-                <p className="menu-message">
+                <p className="celtro-menu-message">
                   Loading categories...
                 </p>
               )}
 
+
               {!categoriesLoading &&
                 categories.length === 0 && (
-                  <p className="menu-message">
+                  <p className="celtro-menu-message">
                     No categories available
                   </p>
                 )}
+
 
               {categories.map(
                 (category) => (
@@ -373,11 +686,13 @@ export default function CustomerHeader() {
 
             </nav>
 
-            <div className="mobile-menu-divider" />
+
+            <div className="celtro-menu-divider" />
+
 
             <button
               type="button"
-              className="menu-location-button"
+              className="celtro-menu-location"
               onClick={() => {
                 setMenuOpen(false);
                 setLocationOpen(true);
@@ -387,7 +702,7 @@ export default function CustomerHeader() {
 
               <span>
                 <small>
-                  Current Location
+                  Your Location
                 </small>
 
                 <strong>
@@ -395,14 +710,19 @@ export default function CustomerHeader() {
                 </strong>
               </span>
 
-              <ChevronRight size={18} />
+              <ChevronRight
+                size={18}
+              />
             </button>
+
 
             <button
               type="button"
-              className="menu-login-button"
+              className="celtro-menu-login"
             >
-              <UserRound size={19} />
+              <UserRound
+                size={19}
+              />
 
               Login / Register
             </button>
@@ -411,24 +731,26 @@ export default function CustomerHeader() {
         </div>
       )}
 
-      {/* ======================
+
+      {/* =========================
           LOCATION MODAL
-      ====================== */}
+      ========================= */}
 
       {locationOpen && (
         <div
-          className="location-modal-overlay"
+          className="celtro-location-overlay"
           onClick={() =>
             setLocationOpen(false)
           }
         >
           <div
-            className="location-modal"
+            className="celtro-location-modal"
             onClick={(event) =>
               event.stopPropagation()
             }
           >
-            <div className="location-modal-header">
+
+            <div className="celtro-location-header">
 
               <div>
                 <span>
@@ -440,27 +762,31 @@ export default function CustomerHeader() {
                 </h2>
               </div>
 
+
               <button
                 type="button"
-                className="location-modal-close"
                 onClick={() =>
                   setLocationOpen(false)
                 }
+                aria-label="Close location"
               >
                 <X size={21} />
               </button>
 
             </div>
 
+
             <button
               type="button"
-              className="detect-location-button"
+              className="celtro-detect-location"
               onClick={
                 detectCurrentLocation
               }
               disabled={detecting}
             >
-              <LocateFixed size={20} />
+              <LocateFixed
+                size={21}
+              />
 
               <span>
                 <strong>
@@ -470,32 +796,37 @@ export default function CustomerHeader() {
                 </strong>
 
                 <small>
-                  Allow browser location
-                  access
+                  Show nearby area instead
+                  of coordinates
                 </small>
               </span>
             </button>
 
-            <div className="location-divider">
-              <span>OR</span>
+
+            <div className="celtro-location-divider">
+              <span>
+                OR
+              </span>
             </div>
 
+
             <label
-              className="location-input-label"
-              htmlFor="manual-location"
+              htmlFor="celtro-location-input"
+              className="celtro-location-label"
             >
               Enter city or pincode
             </label>
 
-            <div className="location-input-group">
+
+            <div className="celtro-location-input">
 
               <MapPin size={19} />
 
               <input
-                id="manual-location"
+                id="celtro-location-input"
                 type="text"
-                placeholder="Mumbai or 400001"
                 value={manualLocation}
+                placeholder="Mumbai or 400037"
                 onChange={(event) =>
                   setManualLocation(
                     event.target.value,
@@ -503,9 +834,10 @@ export default function CustomerHeader() {
                 }
                 onKeyDown={(event) => {
                   if (
-                    event.key === "Enter"
+                    event.key ===
+                    "Enter"
                   ) {
-                    saveLocation(
+                    void saveLocation(
                       manualLocation,
                     );
                   }
@@ -514,19 +846,23 @@ export default function CustomerHeader() {
 
             </div>
 
+
             <button
               type="button"
-              className="save-location-button"
+              className="celtro-save-location"
               disabled={
-                !manualLocation.trim()
+                !manualLocation.trim() ||
+                savingLocation
               }
               onClick={() =>
-                saveLocation(
+                void saveLocation(
                   manualLocation,
                 )
               }
             >
-              Save Location
+              {savingLocation
+                ? "Finding location..."
+                : "Save Location"}
             </button>
 
           </div>

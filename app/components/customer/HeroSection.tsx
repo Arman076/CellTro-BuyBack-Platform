@@ -1,116 +1,140 @@
-import Link from 'next/link';
 import {
-  ArrowRight,
   BadgeCheck,
   ShieldCheck,
+  Sparkles,
   Truck,
-} from 'lucide-react';
+  WalletCards,
+} from "lucide-react";
+
+import DeviceSearch from "@/components/customer/DeviceSearch";
 
 export default function HeroSection() {
   return (
-    <section className="hero-section">
+    <section className="celtro-hero">
 
-      <div className="hero-background hero-background-one" />
-      <div className="hero-background hero-background-two" />
+      {/* BACKGROUND DECORATION */}
 
-      <div className="hero-container">
+      <div className="celtro-hero-glow celtro-hero-glow-left" />
 
-        <div className="hero-content">
+      <div className="celtro-hero-glow celtro-hero-glow-right" />
 
-          <div className="hero-badge">
-            <BadgeCheck size={17} />
-            Simple & trusted device selling
-          </div>
 
-          <h1>
-            Sell Your Old Device
-            <span> At The Best Value</span>
-          </h1>
+      <div className="celtro-hero-container">
 
-          <p>
-            Get an instant estimated value for your device,
-            schedule a pickup and sell without the usual hassle.
-          </p>
+        {/* BADGE */}
 
-          <div className="hero-buttons">
+        <div className="celtro-hero-badge">
 
-            <a href="#sell-by-category" className="primary-hero-button">
-              Sell Your Device
-              <ArrowRight size={19} />
-            </a>
+          <Sparkles size={16} />
 
-            <Link href="/#how-it-works" className="secondary-hero-button">
-              How It Works
-            </Link>
-
-          </div>
-
-          <div className="hero-trust">
-
-            <div>
-              <ShieldCheck size={20} />
-              <span>Secure Process</span>
-            </div>
-
-            <div>
-              <Truck size={20} />
-              <span>Convenient Pickup</span>
-            </div>
-
-            <div>
-              <BadgeCheck size={20} />
-              <span>Transparent Quote</span>
-            </div>
-
-          </div>
+          <span>
+            Simple, Secure &
+            Transparent
+          </span>
 
         </div>
 
-        <div className="hero-visual">
 
-          <div className="hero-device-card">
+        {/* MAIN SEO H1 */}
 
-            <div className="phone-illustration">
+        <h1>
+          Sell Your Old Device
+          <span>
+            {" "}For The Best Value
+          </span>
+        </h1>
 
-              <div className="phone-camera">
-                <span />
-                <span />
-                <span />
-              </div>
 
-              <div className="phone-brand">
-                Your Device
-              </div>
+        {/* DESCRIPTION */}
 
-            </div>
+        <p className="celtro-hero-description">
+          Select your device, get an
+          estimated value and schedule
+          a convenient pickup with
+          CELLTRO.
+        </p>
 
-            <div className="floating-card floating-card-one">
-              <span>1</span>
 
-              <div>
-                <small>Select device</small>
-                <strong>Choose your model</strong>
-              </div>
-            </div>
+        {/* REAL DEVICE SEARCH */}
 
-            <div className="floating-card floating-card-two">
-              <span>2</span>
+        <div className="celtro-hero-device-search">
 
-              <div>
-                <small>Get value</small>
-                <strong>Instant estimate</strong>
-              </div>
-            </div>
+          <DeviceSearch
+            variant="hero"
+            placeholder="Search iPhone, Samsung, laptop..."
+          />
 
-            <div className="floating-card floating-card-three">
-              <span>3</span>
+        </div>
 
-              <div>
-                <small>Pickup</small>
-                <strong>Sell conveniently</strong>
-              </div>
-            </div>
 
+        {/* PROCESS */}
+
+        <div className="celtro-hero-process">
+
+          <span>
+            CHECK PRICE
+          </span>
+
+          <i />
+
+          <span>
+            SCHEDULE PICKUP
+          </span>
+
+          <i />
+
+          <span>
+            GET PAID
+          </span>
+
+        </div>
+
+
+        {/* TRUST FEATURES */}
+
+        <div className="celtro-hero-trust">
+
+          <div>
+            <ShieldCheck
+              size={19}
+            />
+
+            <span>
+              Secure Process
+            </span>
+          </div>
+
+
+          <div>
+            <Truck
+              size={19}
+            />
+
+            <span>
+              Convenient Pickup
+            </span>
+          </div>
+
+
+          <div>
+            <WalletCards
+              size={19}
+            />
+
+            <span>
+              Transparent Value
+            </span>
+          </div>
+
+
+          <div>
+            <BadgeCheck
+              size={19}
+            />
+
+            <span>
+              Verified Sale
+            </span>
           </div>
 
         </div>
