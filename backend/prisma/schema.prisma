@@ -20,7 +20,8 @@ model Category {
   products          Product[]
   series            ProductSeries[]
 
-  questionnaireItems QuestionnaireItem[]
+  questionnaireItems          QuestionnaireItem[]
+  questionnaireDeductionRules QuestionnaireDeductionRule[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -37,6 +38,8 @@ model Brand {
   categories CategoryBrand[]
   products   Product[]
   series     ProductSeries[]
+
+  questionnaireDeductionRules QuestionnaireDeductionRule[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -78,6 +81,7 @@ model Product {
 
   questionnaireMappings       QuestionnaireItemProduct[]
   questionnaireDeductionRules QuestionnaireDeductionRule[]
+  capabilities                ProductCapability[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -96,6 +100,8 @@ model ProductVariant {
   isActive  Boolean @default(true)
 
   values VariantAttributeValue[]
+
+  questionnaireDeductionRules QuestionnaireDeductionRule[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -153,10 +159,40 @@ model VariantAttributeValue {
   @@unique([variantId, attributeId])
 }
 
+enum QuestionnaireChildSelectionMode {
+  SINGLE
+  MULTI
+}
+
 enum QuestionnaireAnswerType {
   YES_NO
   SINGLE_SELECT
   MULTI_SELECT
+}
+
+enum QuestionnaireDeductionType {
+  PERCENTAGE
+  FIXED
+}
+
+enum QuestionnaireDeductionTrigger {
+  SELECTED
+  MISSING
+}
+
+enum QuestionnaireCalculationMode {
+  MAX
+  SUM
+  SINGLE
+}
+
+enum QuestionnaireRuleScope {
+  GLOBAL
+  CATEGORY
+  BRAND
+  SERIES
+  PRODUCT
+  VARIANT
 }
 
 model QuestionnaireAudience {
@@ -173,11 +209,12 @@ model QuestionnaireAudience {
 }
 
 model QuestionnaireSection {
-  id           Int     @id @default(autoincrement())
-  code         String  @unique
-  name         String
-  displayOrder Int     @default(0)
-  isActive     Boolean @default(true)
+  id              Int                          @id @default(autoincrement())
+  code            String                       @unique
+  name            String
+  displayOrder    Int                          @default(0)
+  isActive        Boolean                      @default(true)
+  calculationMode QuestionnaireCalculationMode @default(SUM)
 
   items QuestionnaireItem[]
 
@@ -221,10 +258,27 @@ model QuestionnaireItem {
 model QuestionnaireOption {
   id Int @id @default(autoincrement())
 
-  label String
-  value String
+  label     String
+  value     String
+  issueCode String?
 
+  // Kept temporarily so current questionnaire code/data continues to work.
   deductionPercent Decimal @default(0) @db.Decimal(5, 2)
+
+  deductionType    QuestionnaireDeductionType    @default(PERCENTAGE)
+  deductionValue   Decimal                       @default(0) @db.Decimal(12, 2)
+  deductionTrigger QuestionnaireDeductionTrigger @default(SELECTED)
+  // Branching / sub-option configuration
+  parentOptionId   Int?
+  parentOption     QuestionnaireOption?          @relation("QuestionnaireOptionChildren", fields: [parentOptionId], references: [id], onDelete: Cascade)
+  childOptions     QuestionnaireOption[]         @relation("QuestionnaireOptionChildren")
+
+  showChildOptions      Boolean                         @default(false)
+  childPrompt           String?
+  requireChildSelection Boolean                         @default(false)
+  minChildSelections    Int                             @default(0)
+  maxChildSelections    Int?
+  childSelectionMode    QuestionnaireChildSelectionMode @default(MULTI)
 
   displayOrder Int     @default(0)
   isActive     Boolean @default(true)
@@ -235,11 +289,14 @@ model QuestionnaireOption {
   dependentConditions QuestionnaireCondition[]
 
   deductionRules QuestionnaireDeductionRule[]
+  capabilities   QuestionnaireOptionCapability[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([itemId, value])
+  @@index([parentOptionId])
+  @@index([issueCode])
 }
 
 model QuestionnaireItemAudience {
@@ -290,19 +347,89 @@ model QuestionnaireDeductionRule {
   optionId Int
   option   QuestionnaireOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
 
-  productId Int
-  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  scope QuestionnaireRuleScope @default(PRODUCT)
 
-  deductionPercent Decimal @db.Decimal(5, 2)
+  categoryId Int?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
+  brandId Int?
+  brand   Brand? @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  seriesId Int?
+  series   ProductSeries? @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+
+  productId Int?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  variantId Int?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  // Kept temporarily for backward compatibility.
+  deductionPercent Decimal? @db.Decimal(5, 2)
+
+  deductionType  QuestionnaireDeductionType @default(PERCENTAGE)
+  deductionValue Decimal                    @default(0) @db.Decimal(12, 2)
+
+  priority Int     @default(0)
   isActive Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([optionId, productId])
-  @@index([productId])
   @@index([optionId])
+  @@index([scope])
+  @@index([categoryId])
+  @@index([brandId])
+  @@index([seriesId])
+  @@index([productId])
+  @@index([variantId])
+  @@index([optionId, scope, isActive])
+}
+
+model DeviceCapability {
+  id           Int     @id @default(autoincrement())
+  code         String  @unique
+  name         String
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
+
+  products ProductCapability[]
+  options  QuestionnaireOptionCapability[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ProductCapability {
+  id Int @id @default(autoincrement())
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  capabilityId Int
+  capability   DeviceCapability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([productId, capabilityId])
+  @@index([productId])
+  @@index([capabilityId])
+}
+
+model QuestionnaireOptionCapability {
+  id Int @id @default(autoincrement())
+
+  optionId Int
+  option   QuestionnaireOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  capabilityId Int
+  capability   DeviceCapability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([optionId, capabilityId])
+  @@index([optionId])
+  @@index([capabilityId])
 }
 
 model ProductSeries {
@@ -320,6 +447,8 @@ model ProductSeries {
 
   products Product[]
 
+  questionnaireDeductionRules QuestionnaireDeductionRule[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -328,17 +457,16 @@ model ProductSeries {
   @@index([brandId])
 }
 
-
 model SiteSetting {
   id Int @id @default(autoincrement())
 
-  companyName String @default("CELLTRO")
+  companyName String  @default("CELLTRO")
   tagline     String? @default("Sell Smart. Sell Easy.")
 
-  supportPhone    String?
-  whatsappNumber  String?
-  supportEmail    String?
-  businessEmail   String?
+  supportPhone   String?
+  whatsappNumber String?
+  supportEmail   String?
+  businessEmail  String?
 
   officeAddress String?
   city          String?
@@ -356,18 +484,16 @@ model SiteSetting {
   updatedAt DateTime @updatedAt
 }
 
-
 model TermsSection {
-  id           Int      @id @default(autoincrement())
+  id           Int     @id @default(autoincrement())
   title        String
   content      String
-  displayOrder Int      @default(0)
-  isActive     Boolean  @default(true)
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
-
 
 enum PartnerType {
   BUYBACK_VENDOR

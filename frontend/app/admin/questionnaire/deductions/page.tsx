@@ -1,615 +1,148 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from "react";
 
-import { API_BASE_URL } from '@/lib/api';
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
-type Category = {
-  id: number;
-  name: string;
+async function json(url: string, init?: RequestInit) {
+  const r = await fetch(url, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(Array.isArray(d?.message) ? d.message.join(", ") : d?.message || `Request failed (${r.status})`);
+  return d;
+}
+
+type IdName={id:number;name:string};
+type FlatOption={
+  id:number;
+  label:string;
+  path:string;
+  deductionType:"PERCENTAGE"|"FIXED";
+  deductionValue:number;
+};
+type Question={
+  id:number;
+  name:string;
+  questionText:string;
+  categoryId?:number|null;
+  applyToAllProducts:boolean;
+  section:{name:string;displayOrder:number};
+  productMappings:Array<{productId:number}>;
+  options:any[];
+};
+type Rule={
+  id:number;
+  optionId:number;
+  scope:string;
+  productId?:number|null;
+  deductionType:"PERCENTAGE"|"FIXED";
+  deductionValue:number|string;
+  isActive:boolean;
 };
 
-type Brand = {
-  id: number;
-  name: string;
-};
+export default function DeductionPage(){
+  const[categories,setCategories]=useState<IdName[]>([]);
+  const[brands,setBrands]=useState<IdName[]>([]);
+  const[products,setProducts]=useState<IdName[]>([]);
+  const[questions,setQuestions]=useState<Question[]>([]);
+  const[rules,setRules]=useState<Rule[]>([]);
+  const[categoryId,setCategoryId]=useState("");
+  const[brandId,setBrandId]=useState("");
+  const[productId,setProductId]=useState("");
+  const[editing,setEditing]=useState<number|null>(null);
+  const[type,setType]=useState<"PERCENTAGE"|"FIXED">("PERCENTAGE");
+  const[value,setValue]=useState(0);
+  const[search,setSearch]=useState("");
+  const[message,setMessage]=useState("");
+  const[error,setError]=useState("");
 
-type Product = {
-  id: number;
-  name: string;
-  brandId: number;
-  categoryId: number;
-};
+  useEffect(()=>{Promise.all([json(`${API}/categories`),json(`${API}/questionnaire/branch/questions`)]).then(([c,q])=>{setCategories(c);setQuestions(q)}).catch(e=>setError(e.message))},[]);
+  useEffect(()=>{setBrandId("");setProductId("");setRules([]);if(!categoryId)return setBrands([]);json(`${API}/brands?categoryId=${categoryId}`).then(setBrands).catch(e=>setError(e.message))},[categoryId]);
+  useEffect(()=>{setProductId("");setRules([]);if(!brandId)return setProducts([]);json(`${API}/products?categoryId=${categoryId}&brandId=${brandId}`).then(setProducts).catch(e=>setError(e.message))},[brandId]);
 
-type QuestionnaireOption = {
-  id: number;
-  label: string;
-  value: string;
-};
+  const applicable=useMemo(()=>questions.filter(q=>{
+    if(!productId||!categoryId)return false;
+    const cat=!q.categoryId||q.categoryId===Number(categoryId);
+    const product=q.applyToAllProducts||q.productMappings.some(m=>m.productId===Number(productId));
+    const s=search.toLowerCase().trim();
+    const matches=!s||q.name.toLowerCase().includes(s)||q.questionText.toLowerCase().includes(s)||q.options.some(o=>o.label.toLowerCase().includes(s)||(o.childOptions||[]).some((c:any)=>c.label.toLowerCase().includes(s)));
+    return cat&&product&&matches;
+  }).sort((a,b)=>a.section.displayOrder-b.section.displayOrder),[questions,categoryId,productId,search]);
 
-type ProductMapping = {
-  productId: number;
-};
-
-type Question = {
-  id: number;
-  name: string;
-  questionText: string;
-  applyToAllProducts: boolean;
-
-  section: {
-    id: number;
-    name: string;
+  const flatten=(q:Question):FlatOption[]=>{
+    const result:FlatOption[]=[];
+    q.options.forEach(o=>{
+      result.push({id:o.id,label:o.label,path:o.label,deductionType:o.deductionType||"PERCENTAGE",deductionValue:Number(o.deductionValue??o.deductionPercent??0)});
+      (o.childOptions||[]).forEach((c:any)=>result.push({id:c.id,label:c.label,path:`${o.label} → ${c.label}`,deductionType:c.deductionType||"PERCENTAGE",deductionValue:Number(c.deductionValue??c.deductionPercent??0)}));
+    });
+    return result;
   };
 
-  options: QuestionnaireOption[];
+  useEffect(()=>{
+    if(!productId)return setRules([]);
+    const ids=applicable.flatMap(q=>flatten(q).map(o=>o.id));
+    Promise.all(ids.map(id=>json(`${API}/questionnaire/deduction-rules?optionId=${id}`))).then(x=>setRules(x.flat())).catch(e=>setError(e.message));
+  },[productId,questions]);
 
-  productMappings?: ProductMapping[];
-};
+  const override=(id:number)=>rules.find(r=>r.optionId===id&&r.scope==="PRODUCT"&&r.productId===Number(productId)&&r.isActive);
+  const fmt=(t:string,v:number)=>t==="FIXED"?`₹${v}`:`${v}%`;
 
-export default function QuestionnaireDeductionsPage() {
-  const [categories, setCategories] = useState<Category[]>(
-    [],
-  );
-
-  const [brands, setBrands] = useState<Brand[]>([]);
-
-  const [products, setProducts] = useState<Product[]>(
-    [],
-  );
-
-  const [questions, setQuestions] = useState<Question[]>(
-    [],
-  );
-
-  const [categoryId, setCategoryId] = useState('');
-
-  const [brandId, setBrandId] = useState('');
-
-  const [questionId, setQuestionId] = useState('');
-
-  const [optionId, setOptionId] = useState('');
-
-  const [deductionPercent, setDeductionPercent] =
-    useState('');
-
-  const [search, setSearch] = useState('');
-
-  const [selectedProductIds, setSelectedProductIds] =
-    useState<number[]>([]);
-
-  const [updateExisting, setUpdateExisting] =
-    useState(false);
-
-  const [loading, setLoading] = useState(false);
-
-  const [message, setMessage] = useState('');
-
-  const selectedQuestion = useMemo(
-    () =>
-      questions.find(
-        (question) =>
-          question.id === Number(questionId),
-      ),
-    [questions, questionId],
-  );
-
-  useEffect(() => {
-    Promise.all([
-      fetch(`${API_BASE_URL}/categories`).then((res) =>
-        res.json(),
-      ),
-
-      fetch(
-        `${API_BASE_URL}/questionnaire/questions`,
-      ).then((res) => res.json()),
-    ])
-      .then(([categoryData, questionData]) => {
-        setCategories(
-          Array.isArray(categoryData)
-            ? categoryData
-            : [],
-        );
-
-        setQuestions(
-          Array.isArray(questionData)
-            ? questionData
-            : [],
-        );
-      })
-      .catch(() => {
-        setMessage(
-          'Unable to load questionnaire configuration.',
-        );
-      });
-  }, []);
-
-  useEffect(() => {
-    setBrandId('');
-    setSelectedProductIds([]);
-
-    if (!categoryId) {
-      setBrands([]);
-      return;
-    }
-
-    fetch(
-      `${API_BASE_URL}/brands?categoryId=${categoryId}`,
-    )
-      .then((res) => res.json())
-      .then((data) => {
-        setBrands(Array.isArray(data) ? data : []);
-      })
-      .catch(() => {
-        setBrands([]);
-      });
-  }, [categoryId]);
-
-  useEffect(() => {
-    setSelectedProductIds([]);
-
-    if (!categoryId || !brandId) {
-      setProducts([]);
-      return;
-    }
-
-    fetch(
-      `${API_BASE_URL}/products?categoryId=${categoryId}&brandId=${brandId}`,
-    )
-      .then((res) => res.json())
-      .then((data) => {
-        setProducts(Array.isArray(data) ? data : []);
-      })
-      .catch(() => {
-        setProducts([]);
-      });
-  }, [categoryId, brandId]);
-
-  useEffect(() => {
-    setOptionId('');
-    setSelectedProductIds([]);
-  }, [questionId]);
-
-  const categoryQuestions = useMemo(() => {
-    if (!categoryId) {
-      return questions;
-    }
-
-    /*
-     * If your questions endpoint returns categoryId,
-     * add category filtering here.
-     *
-     * For now product applicability is enforced
-     * securely by backend.
-     */
-    return questions;
-  }, [questions, categoryId]);
-
-  const visibleProducts = useMemo(() => {
-    const normalizedSearch = search
-      .trim()
-      .toLowerCase();
-
-    return products.filter((product) => {
-      if (
-        normalizedSearch &&
-        !product.name
-          .toLowerCase()
-          .includes(normalizedSearch)
-      ) {
-        return false;
-      }
-
-      if (
-        selectedQuestion &&
-        !selectedQuestion.applyToAllProducts
-      ) {
-        const allowedIds = new Set(
-          (
-            selectedQuestion.productMappings || []
-          ).map((mapping) => mapping.productId),
-        );
-
-        return allowedIds.has(product.id);
-      }
-
-      return true;
-    });
-  }, [products, search, selectedQuestion]);
-
-  function toggleProduct(productId: number) {
-    setSelectedProductIds((current) =>
-      current.includes(productId)
-        ? current.filter((id) => id !== productId)
-        : [...current, productId],
-    );
+  async function save(o:FlatOption){
+    try{
+      setError("");setMessage("");
+      if(value<0||(type==="PERCENTAGE"&&value>100))throw new Error("Invalid deduction value");
+      await json(`${API}/questionnaire/deduction-rules/scoped`,{method:"POST",body:JSON.stringify({optionId:o.id,scope:"PRODUCT",targetId:Number(productId),deductionType:type,deductionValue:Number(value),priority:100})});
+      const d=await json(`${API}/questionnaire/deduction-rules?optionId=${o.id}`);
+      setRules(c=>[...c.filter(r=>r.optionId!==o.id),...d]);
+      setEditing(null);setMessage("Model-specific deduction saved. Other models are unchanged.");
+    }catch(e){setError(e instanceof Error?e.message:"Unable to save")}
   }
 
-  function selectAllVisible() {
-    const visibleIds = visibleProducts.map(
-      (product) => product.id,
-    );
+  return <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
+    <div className="mx-auto max-w-7xl space-y-6">
+      <header className="rounded-3xl bg-slate-950 p-6 text-white">
+        <h1 className="text-3xl font-bold">Model Deduction Manager</h1>
+        <p className="mt-2 text-sm text-slate-300">Category → Brand → Model. Global questions and sub-options appear automatically. Override only what differs.</p>
+        <a href="/admin/questionnaire/questions" className="mt-4 inline-block rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-900">← Questionnaire Builder</a>
+      </header>
 
-    setSelectedProductIds((current) => [
-      ...new Set([...current, ...visibleIds]),
-    ]);
-  }
+      {message&&<div className="rounded-2xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{message}</div>}
+      {error&&<div className="rounded-2xl bg-red-50 p-4 text-sm font-semibold text-red-700">{error}</div>}
 
-  function clearSelection() {
-    setSelectedProductIds([]);
-  }
-
-  async function saveRules() {
-    setMessage('');
-
-    if (!questionId) {
-      setMessage('Please select a question/item.');
-      return;
-    }
-
-    if (!optionId) {
-      setMessage(
-        'Please select the answer that should cause deduction.',
-      );
-      return;
-    }
-
-    if (!selectedProductIds.length) {
-      setMessage(
-        'Please select at least one phone.',
-      );
-      return;
-    }
-
-    const deduction = Number(deductionPercent);
-
-    if (
-      !Number.isFinite(deduction) ||
-      deduction < 0 ||
-      deduction > 100
-    ) {
-      setMessage(
-        'Deduction must be between 0 and 100%.',
-      );
-      return;
-    }
-
-    try {
-      setLoading(true);
-
-      const response = await fetch(
-        `${API_BASE_URL}/questionnaire/deduction-rules/bulk`,
-        {
-          method: 'POST',
-
-          headers: {
-            'Content-Type': 'application/json',
-          },
-
-          body: JSON.stringify({
-            itemId: Number(questionId),
-            optionId: Number(optionId),
-            productIds: selectedProductIds,
-            deductionPercent: deduction,
-            updateExisting,
-          }),
-        },
-      );
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          result?.message ||
-            'Unable to save deduction rules.',
-        );
-      }
-
-      setMessage(
-        `Saved successfully. Created: ${
-          result.created
-        }, Updated: ${
-          result.updated
-        }, Skipped: ${result.skipped}`,
-      );
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : 'Unable to save deduction rules.',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-gray-900">
-          Questionnaire Deduction Rules
-        </h1>
-
-        <p className="mt-1 text-sm text-gray-500">
-          Map questionnaire answers to one or multiple
-          phone models without creating duplicate
-          questions.
-        </p>
-      </div>
-
-      {message && (
-        <div className="rounded-xl border bg-white p-4 text-sm text-gray-700">
-          {message}
+      <section className="rounded-3xl border bg-white p-5 shadow-sm">
+        <div className="grid gap-3 md:grid-cols-3">
+          <select className="input" value={categoryId} onChange={e=>setCategoryId(e.target.value)}><option value="">Category</option>{categories.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select>
+          <select className="input" value={brandId} onChange={e=>setBrandId(e.target.value)} disabled={!categoryId}><option value="">Brand</option>{brands.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select>
+          <select className="input" value={productId} onChange={e=>setProductId(e.target.value)} disabled={!brandId}><option value="">Model</option>{products.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select>
         </div>
-      )}
+      </section>
 
-      <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
-        <div className="space-y-5 rounded-2xl border bg-white p-5 shadow-sm">
-          <div>
-            <label className="mb-2 block text-sm font-medium">
-              Category
-            </label>
-
-            <select
-              value={categoryId}
-              onChange={(event) =>
-                setCategoryId(event.target.value)
-              }
-              className="w-full rounded-xl border px-3 py-2.5"
-            >
-              <option value="">
-                Select category
-              </option>
-
-              {categories.map((category) => (
-                <option
-                  key={category.id}
-                  value={category.id}
-                >
-                  {category.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium">
-              Brand
-            </label>
-
-            <select
-              value={brandId}
-              disabled={!categoryId}
-              onChange={(event) =>
-                setBrandId(event.target.value)
-              }
-              className="w-full rounded-xl border px-3 py-2.5 disabled:bg-gray-100"
-            >
-              <option value="">
-                Select brand
-              </option>
-
-              {brands.map((brand) => (
-                <option
-                  key={brand.id}
-                  value={brand.id}
-                >
-                  {brand.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium">
-              Question / Item
-            </label>
-
-            <select
-              value={questionId}
-              onChange={(event) =>
-                setQuestionId(event.target.value)
-              }
-              className="w-full rounded-xl border px-3 py-2.5"
-            >
-              <option value="">
-                Select question
-              </option>
-
-              {categoryQuestions.map((question) => (
-                <option
-                  key={question.id}
-                  value={question.id}
-                >
-                  {question.section?.name
-                    ? `${question.section.name} — `
-                    : ''}
-                  {question.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium">
-              Deduct When Customer Selects
-            </label>
-
-            <select
-              value={optionId}
-              disabled={!selectedQuestion}
-              onChange={(event) =>
-                setOptionId(event.target.value)
-              }
-              className="w-full rounded-xl border px-3 py-2.5 disabled:bg-gray-100"
-            >
-              <option value="">
-                Select answer
-              </option>
-
-              {selectedQuestion?.options?.map(
-                (option) => (
-                  <option
-                    key={option.id}
-                    value={option.id}
-                  >
-                    {option.label}
-                  </option>
-                ),
-              )}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium">
-              Deduction %
-            </label>
-
-            <div className="relative">
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                value={deductionPercent}
-                onChange={(event) =>
-                  setDeductionPercent(
-                    event.target.value,
-                  )
-                }
-                placeholder="e.g. 2"
-                className="w-full rounded-xl border px-3 py-2.5 pr-10"
-              />
-
-              <span className="absolute right-3 top-2.5 text-gray-500">
-                %
-              </span>
-            </div>
-          </div>
-
-          <label className="flex cursor-pointer items-start gap-3 rounded-xl border p-3">
-            <input
-              type="checkbox"
-              checked={updateExisting}
-              onChange={(event) =>
-                setUpdateExisting(
-                  event.target.checked,
-                )
-              }
-              className="mt-1"
-            />
-
-            <span>
-              <span className="block text-sm font-medium">
-                Update existing rules
-              </span>
-
-              <span className="block text-xs text-gray-500">
-                Keep disabled to safely skip already
-                configured phones.
-              </span>
-            </span>
-          </label>
-
-          <button
-            onClick={saveRules}
-            disabled={loading}
-            className="w-full rounded-xl bg-gray-900 px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
-          >
-            {loading
-              ? 'Saving...'
-              : `Save Rules (${selectedProductIds.length} phones)`}
-          </button>
+      {productId&&<section className="rounded-3xl border bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div><h2 className="text-xl font-bold">Applicable Questions & Sub-options</h2><p className="text-sm text-slate-500">Default remains global/category level. Override is saved only for this model.</p></div>
+          <input className="input max-w-xs" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search issue..." />
         </div>
 
-        <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-semibold">
-                Select Phones
-              </h2>
-
-              <p className="text-sm text-gray-500">
-                Select one phone or as many phones as
-                required.
-              </p>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={selectAllVisible}
-                className="rounded-lg border px-3 py-2 text-sm"
-              >
-                Select All
-              </button>
-
-              <button
-                type="button"
-                onClick={clearSelection}
-                className="rounded-lg border px-3 py-2 text-sm"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-
-          <input
-            value={search}
-            onChange={(event) =>
-              setSearch(event.target.value)
-            }
-            placeholder="Search phone model..."
-            className="mt-5 w-full rounded-xl border px-3 py-2.5"
-          />
-
-          {!brandId ? (
-            <div className="py-16 text-center text-sm text-gray-500">
-              Select category and brand first.
-            </div>
-          ) : visibleProducts.length === 0 ? (
-            <div className="py-16 text-center text-sm text-gray-500">
-              No applicable phone models found.
-            </div>
-          ) : (
-            <div className="mt-4 grid max-h-[520px] gap-2 overflow-y-auto sm:grid-cols-2 xl:grid-cols-3">
-              {visibleProducts.map((product) => {
-                const selected =
-                  selectedProductIds.includes(
-                    product.id,
-                  );
-
-                return (
-                  <button
-                    key={product.id}
-                    type="button"
-                    onClick={() =>
-                      toggleProduct(product.id)
-                    }
-                    className={`rounded-xl border p-3 text-left transition ${
-                      selected
-                        ? 'border-gray-900 bg-gray-50'
-                        : 'hover:bg-gray-50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        readOnly
-                      />
-
-                      <span className="text-sm font-medium">
-                        {product.name}
-                      </span>
-                    </div>
-                  </button>
-                );
+        <div className="mt-5 space-y-5">
+          {applicable.map(q=><article key={q.id} className="overflow-hidden rounded-2xl border">
+            <div className="border-b bg-slate-50 px-4 py-3"><div className="text-xs font-bold uppercase text-indigo-600">{q.section.name}</div><div className="font-bold">{q.questionText}</div></div>
+            <div className="divide-y">
+              {flatten(q).map(o=>{
+                const r=override(o.id), active=editing===o.id;
+                return <div key={o.id} className="grid gap-3 p-4 lg:grid-cols-[1.5fr_.7fr_.9fr_auto] lg:items-center">
+                  <div><div className="font-semibold">{o.path}</div><div className="text-xs text-slate-500">Default: <b>{fmt(o.deductionType,o.deductionValue)}</b></div></div>
+                  <div><div className="text-xs uppercase text-slate-400">This model</div><div className="font-bold">{r?fmt(r.deductionType,Number(r.deductionValue)):"Uses default"}</div></div>
+                  {active?<div className="flex gap-2"><select className="input" value={type} onChange={e=>setType(e.target.value as any)}><option value="PERCENTAGE">%</option><option value="FIXED">₹</option></select><input className="input" type="number" min={0} value={value} onChange={e=>setValue(Number(e.target.value))}/></div>:<div className="text-xs text-slate-500">{r?"Model override active":"No override"}</div>}
+                  <div>{active?<div className="flex gap-2"><button onClick={()=>save(o)} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white">Save</button><button onClick={()=>setEditing(null)} className="rounded-xl border px-4 py-2 text-sm font-bold">Cancel</button></div>:<button onClick={()=>{const r=override(o.id);setEditing(o.id);setType(r?.deductionType||o.deductionType);setValue(Number(r?.deductionValue??o.deductionValue))}} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">{r?"Update":"Set Override"}</button>}</div>
+                </div>
               })}
             </div>
-          )}
+          </article>)}
         </div>
-      </div>
+      </section>}
     </div>
-  );
+    <style jsx global>{`.input{width:100%;border:1px solid #cbd5e1;border-radius:.75rem;padding:.75rem .875rem;background:white;outline:none}.input:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgb(99 102 241 / .12)}.input:disabled{background:#f1f5f9;color:#94a3b8}`}</style>
+  </div>
 }

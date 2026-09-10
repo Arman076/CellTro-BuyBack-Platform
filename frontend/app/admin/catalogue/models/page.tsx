@@ -710,8 +710,11 @@ export default function ModelsPage() {
               undefined,
 
             imageUrl:
-              form.imageUrl ||
-              undefined,
+              form.imageUrl.trim()
+                ? form.imageUrl.trim()
+                : editing
+                  ? ''
+                  : undefined,
 
             description:
               form.description.trim() ||
@@ -1286,59 +1289,128 @@ export default function ModelsPage() {
                 />
               </div>
 
-              <div>
-                <label className="mb-2 block text-sm font-medium">
-                  Model Image
-                </label>
-
-                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed bg-gray-50 px-4 py-5">
-                  <ImagePlus size={20} />
-
-                  {uploading
-                    ? 'Uploading...'
-                    : 'Choose Image'}
+              <div className="space-y-4">
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="block text-sm font-medium">
+                      Image URL
+                    </label>
+                    <span className="text-xs text-gray-400">
+                      Optional
+                    </span>
+                  </div>
 
                   <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    className="hidden"
-                    disabled={uploading}
+                    type="text"
+                    value={form.imageUrl}
                     onChange={(event) =>
-                      void handleImageChange(
-                        event,
-                      )
+                      setForm((previous) => ({
+                        ...previous,
+                        imageUrl: event.target.value,
+                      }))
                     }
+                    placeholder="https://example.com/mobile-image.webp"
+                    className="w-full rounded-xl border px-3 py-2.5 outline-none focus:border-gray-500"
                   />
-                </label>
+
+                  <p className="mt-1 text-xs text-gray-400">
+                    Direct JPG, PNG or WEBP image URL paste kar sakte ho.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-gray-200" />
+                  <span className="text-xs font-semibold uppercase text-gray-400">
+                    OR
+                  </span>
+                  <div className="h-px flex-1 bg-gray-200" />
+                </div>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <label className="block text-sm font-medium">
+                      Upload Image
+                    </label>
+                    <span className="text-xs text-gray-400">
+                      Optional
+                    </span>
+                  </div>
+
+                  <label
+                    className={`flex items-center justify-center gap-2 rounded-xl border border-dashed bg-gray-50 px-4 py-5 ${
+                      uploading
+                        ? 'cursor-not-allowed opacity-60'
+                        : 'cursor-pointer hover:bg-gray-100'
+                    }`}
+                  >
+                    {uploading ? (
+                      <RefreshCw
+                        size={20}
+                        className="animate-spin"
+                      />
+                    ) : (
+                      <ImagePlus size={20} />
+                    )}
+
+                    {uploading
+                      ? 'Uploading...'
+                      : 'Choose Image From Computer'}
+
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      disabled={uploading}
+                      onChange={(event) =>
+                        void handleImageChange(event)
+                      }
+                    />
+                  </label>
+
+                  <p className="mt-1 text-xs text-gray-400">
+                    JPG, JPEG, PNG ya WEBP. Maximum 5 MB.
+                  </p>
+                </div>
 
                 {form.imageUrl && (
-                  <div className="mt-3 flex items-center gap-3">
-                    <div className="h-24 w-24 overflow-hidden rounded-xl border">
-                      <img
-                        src={
-                          form.imageUrl
+                  <div className="rounded-xl border bg-gray-50 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        Image Preview
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setForm((previous) => ({
+                            ...previous,
+                            imageUrl: '',
+                          }))
                         }
-                        alt="Preview"
-                        className="h-full w-full object-contain p-2"
+                        className="text-xs font-semibold text-red-600 hover:underline"
+                      >
+                        Remove Image
+                      </button>
+                    </div>
+
+                    <div className="flex h-40 w-40 items-center justify-center overflow-hidden rounded-xl border bg-white">
+                      <img
+                        src={form.imageUrl}
+                        alt={form.name || 'Model preview'}
+                        className="h-full w-full object-contain p-3"
                       />
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setForm(
-                          (previous) => ({
-                            ...previous,
-                            imageUrl: '',
-                          }),
-                        )
-                      }
-                      className="text-sm text-red-600"
-                    >
-                      Remove
-                    </button>
+                    <p className="mt-3 break-all text-xs text-gray-400">
+                      {form.imageUrl}
+                    </p>
                   </div>
                 )}
+
+                <div className="rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  Image optional hai. URL paste kar sakte ho ya computer se
+                  upload kar sakte ho. Dono blank hone par bhi model save hoga.
+                </div>
               </div>
 
               <div>

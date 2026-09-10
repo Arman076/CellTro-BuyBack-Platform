@@ -1151,7 +1151,7 @@ export default function CatalogueImportPage() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="min-w-[1400px] w-full border-collapse">
+              <table className="min-w-350 w-full border-collapse">
                 <thead className="bg-gray-50">
                   <tr>
                     <TableHeader>

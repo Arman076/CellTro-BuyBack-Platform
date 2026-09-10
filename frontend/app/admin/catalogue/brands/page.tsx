@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 'use client';
 
 import {
@@ -146,6 +147,7 @@ export default function BrandsPage() {
   );
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadData();
   }, [loadData]);
 
@@ -513,6 +515,7 @@ export default function BrandsPage() {
                   <div className="flex items-center gap-4">
                     <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl border bg-gray-50">
                       {brand.logoUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={
                             brand.logoUrl

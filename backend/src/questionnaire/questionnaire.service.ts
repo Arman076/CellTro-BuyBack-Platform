@@ -6,19 +6,30 @@ import {
 
 import { PrismaService } from '../prisma/prisma/prisma.service.js';
 
+type AnswerType = 'YES_NO' | 'SINGLE_SELECT' | 'MULTI_SELECT';
+type DeductionType = 'PERCENTAGE' | 'FIXED';
+type DeductionTrigger = 'SELECTED' | 'MISSING';
+
+type OptionPayload = {
+  label: string;
+  value: string;
+  issueCode?: string | null;
+  deductionPercent?: number;
+  deductionType?: DeductionType;
+  deductionValue?: number;
+  deductionTrigger?: DeductionTrigger;
+  capabilityIds?: number[];
+  displayOrder?: number;
+  isActive?: boolean;
+};
+
 @Injectable()
 export class QuestionnaireService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // =========================================================
-  // AUDIENCES
-  // =========================================================
-
   async getAudiences() {
     return this.prisma.questionnaireAudience.findMany({
-      orderBy: {
-        displayOrder: 'asc',
-      },
+      orderBy: { displayOrder: 'asc' },
     });
   }
 
@@ -30,17 +41,17 @@ export class QuestionnaireService {
   }) {
     const code = this.normalizeCode(data.code);
 
+    if (!code || !data.name?.trim()) {
+      throw new BadRequestException('Audience code and name are required');
+    }
+
     const existing =
       await this.prisma.questionnaireAudience.findUnique({
-        where: {
-          code,
-        },
+        where: { code },
       });
 
     if (existing) {
-      throw new BadRequestException(
-        'Audience code already exists',
-      );
+      throw new BadRequestException('Audience code already exists');
     }
 
     return this.prisma.questionnaireAudience.create({
@@ -53,21 +64,11 @@ export class QuestionnaireService {
     });
   }
 
-  // =========================================================
-  // SECTIONS
-  // =========================================================
-
   async getSections() {
     return this.prisma.questionnaireSection.findMany({
-      orderBy: {
-        displayOrder: 'asc',
-      },
+      orderBy: { displayOrder: 'asc' },
       include: {
-        _count: {
-          select: {
-            items: true,
-          },
-        },
+        _count: { select: { items: true } },
       },
     });
   }
@@ -77,20 +78,21 @@ export class QuestionnaireService {
     name: string;
     displayOrder?: number;
     isActive?: boolean;
+    calculationMode?: 'MAX' | 'SUM' | 'SINGLE';
   }) {
     const code = this.normalizeCode(data.code);
 
+    if (!code || !data.name?.trim()) {
+      throw new BadRequestException('Section code and name are required');
+    }
+
     const existing =
       await this.prisma.questionnaireSection.findUnique({
-        where: {
-          code,
-        },
+        where: { code },
       });
 
     if (existing) {
-      throw new BadRequestException(
-        'Section code already exists',
-      );
+      throw new BadRequestException('Section code already exists');
     }
 
     return this.prisma.questionnaireSection.create({
@@ -99,145 +101,62 @@ export class QuestionnaireService {
         name: data.name.trim(),
         displayOrder: data.displayOrder ?? 0,
         isActive: data.isActive ?? true,
+        calculationMode: data.calculationMode ?? 'SUM',
       },
     });
   }
-
-  // =========================================================
-  // QUESTIONS
-  // =========================================================
 
   async getQuestions(filters?: {
     categoryId?: number;
     sectionId?: number;
     audienceId?: number;
+    productId?: number;
   }) {
     return this.prisma.questionnaireItem.findMany({
       where: {
         ...(filters?.categoryId
-          ? {
-              categoryId: filters.categoryId,
-            }
+          ? { categoryId: filters.categoryId }
           : {}),
-
         ...(filters?.sectionId
-          ? {
-              sectionId: filters.sectionId,
-            }
+          ? { sectionId: filters.sectionId }
           : {}),
-
         ...(filters?.audienceId
           ? {
               audiences: {
-                some: {
-                  audienceId: filters.audienceId,
-                },
+                some: { audienceId: filters.audienceId },
               },
             }
           : {}),
+        ...(filters?.productId
+          ? {
+              OR: [
+                { applyToAllProducts: true },
+                {
+                  productMappings: {
+                    some: { productId: filters.productId },
+                  },
+                },
+              ],
+            }
+          : {}),
       },
-
       orderBy: [
-        {
-          section: {
-            displayOrder: 'asc',
-          },
-        },
-        {
-          displayOrder: 'asc',
-        },
+        { section: { displayOrder: 'asc' } },
+        { displayOrder: 'asc' },
       ],
-
-      include: {
-        section: true,
-        category: true,
-
-        options: {
-          orderBy: {
-            displayOrder: 'asc',
-          },
-        },
-
-        audiences: {
-          include: {
-            audience: true,
-          },
-        },
-
-        productMappings: {
-          include: {
-            product: {
-              include: {
-                brand: true,
-                category: true,
-              },
-            },
-          },
-        },
-
-        conditions: {
-          include: {
-            dependsOnOption: {
-              include: {
-                item: true,
-              },
-            },
-          },
-        },
-      },
+      include: this.questionInclude(),
     });
   }
 
   async getQuestion(id: number) {
     const question =
       await this.prisma.questionnaireItem.findUnique({
-        where: {
-          id,
-        },
-
-        include: {
-          section: true,
-          category: true,
-
-          options: {
-            orderBy: {
-              displayOrder: 'asc',
-            },
-          },
-
-          audiences: {
-            include: {
-              audience: true,
-            },
-          },
-
-          productMappings: {
-            include: {
-              product: {
-                include: {
-                  brand: true,
-                  category: true,
-                },
-              },
-            },
-          },
-
-          conditions: {
-            include: {
-              dependsOnOption: {
-                include: {
-                  item: true,
-                },
-              },
-            },
-          },
-        },
+        where: { id },
+        include: this.questionInclude(),
       });
 
     if (!question) {
-      throw new NotFoundException(
-        'Question does not exist',
-      );
+      throw new NotFoundException('Question does not exist');
     }
 
     return question;
@@ -247,142 +166,99 @@ export class QuestionnaireService {
     code: string;
     name: string;
     questionText: string;
-
-    answerType:
-      | 'YES_NO'
-      | 'SINGLE_SELECT'
-      | 'MULTI_SELECT';
-
+    answerType: AnswerType;
     sectionId: number;
-
     categoryId?: number | null;
-
     displayOrder?: number;
     isRequired?: boolean;
     isActive?: boolean;
-
     applyToAllProducts?: boolean;
-
     audienceIds: number[];
-
     productIds?: number[];
-
-    options: {
-      label: string;
-      value: string;
-      deductionPercent?: number;
-      displayOrder?: number;
-      isActive?: boolean;
-    }[];
+    options: OptionPayload[];
   }) {
     const code = this.normalizeCode(data.code);
 
+    if (!code) {
+      throw new BadRequestException('Question code is required');
+    }
+
     const duplicate =
       await this.prisma.questionnaireItem.findUnique({
-        where: {
-          code,
-        },
+        where: { code },
       });
 
     if (duplicate) {
-      throw new BadRequestException(
-        'Question code already exists',
-      );
+      throw new BadRequestException('Question code already exists');
     }
 
     await this.validateQuestionMasterData(data);
 
+    const applyToAllProducts = data.applyToAllProducts ?? true;
+
     return this.prisma.questionnaireItem.create({
       data: {
         code,
-
         name: data.name.trim(),
         questionText: data.questionText.trim(),
-
         answerType: data.answerType,
-
-        sectionId: data.sectionId,
-
-        categoryId:
-          data.categoryId ?? null,
-
-        displayOrder:
-          data.displayOrder ?? 0,
-
-        isRequired:
-          data.isRequired ?? true,
-
-        isActive:
-          data.isActive ?? true,
-
-        applyToAllProducts:
-          data.applyToAllProducts ?? true,
+        sectionId: Number(data.sectionId),
+        categoryId: data.categoryId ?? null,
+        displayOrder: data.displayOrder ?? 0,
+        isRequired: data.isRequired ?? true,
+        isActive: data.isActive ?? true,
+        applyToAllProducts,
 
         audiences: {
-          create: data.audienceIds.map(
-            (audienceId) => ({
-              audienceId,
-            }),
-          ),
+          create: this.cleanIds(data.audienceIds).map((audienceId) => ({
+            audienceId,
+          })),
         },
 
         productMappings:
-          data.applyToAllProducts === false
+          !applyToAllProducts
             ? {
-                create: (
-                  data.productIds ?? []
-                ).map((productId) => ({
-                  productId,
-                })),
+                create: this.cleanIds(data.productIds || []).map(
+                  (productId) => ({ productId }),
+                ),
               }
             : undefined,
 
         options: {
-          create: data.options.map(
-            (option, index) => ({
-              label: option.label.trim(),
+          create: data.options.map((option, index) => {
+            const deduction = this.normalizeOptionDeduction(option);
 
-              value:
-                this.normalizeCode(
-                  option.value,
-                ),
+            return {
+              label: option.label.trim(),
+              value: this.normalizeCode(option.value),
+              issueCode: option.issueCode
+                ? this.normalizeCode(option.issueCode)
+                : this.normalizeCode(`${code}_${option.value}`),
 
               deductionPercent:
-                option.deductionPercent ?? 0,
+                deduction.type === 'PERCENTAGE'
+                  ? deduction.value
+                  : 0,
 
-              displayOrder:
-                option.displayOrder ??
-                index + 1,
+              deductionType: deduction.type,
+              deductionValue: deduction.value,
+              deductionTrigger: option.deductionTrigger ?? 'SELECTED',
 
-              isActive:
-                option.isActive ?? true,
-            }),
-          ),
+              displayOrder: option.displayOrder ?? index + 1,
+              isActive: option.isActive ?? true,
+
+              capabilities: option.capabilityIds?.length
+                ? {
+                    create: this.cleanIds(option.capabilityIds).map(
+                      (capabilityId) => ({ capabilityId }),
+                    ),
+                  }
+                : undefined,
+            };
+          }),
         },
       },
-
-      include: {
-        section: true,
-        category: true,
-
-        options: {
-          orderBy: {
-            displayOrder: 'asc',
-          },
-        },
-
-        audiences: {
-          include: {
-            audience: true,
-          },
-        },
-
-        productMappings: {
-          include: {
-            product: true,
-          },
-        },
-      },
+      include: this.questionInclude(),
     });
   }
 
@@ -391,226 +267,147 @@ export class QuestionnaireService {
     data: {
       name?: string;
       questionText?: string;
-
-      answerType?:
-        | 'YES_NO'
-        | 'SINGLE_SELECT'
-        | 'MULTI_SELECT';
-
+      answerType?: AnswerType;
       sectionId?: number;
       categoryId?: number | null;
-
       displayOrder?: number;
       isRequired?: boolean;
       isActive?: boolean;
-
       applyToAllProducts?: boolean;
-
       audienceIds?: number[];
       productIds?: number[];
     },
   ) {
     const existing =
       await this.prisma.questionnaireItem.findUnique({
-        where: {
-          id,
-        },
+        where: { id },
       });
 
     if (!existing) {
-      throw new NotFoundException(
-        'Question does not exist',
-      );
+      throw new NotFoundException('Question does not exist');
     }
 
-    if (data.sectionId) {
-      const section =
-        await this.prisma.questionnaireSection.findUnique({
-          where: {
-            id: data.sectionId,
-          },
-        });
-
-      if (!section) {
-        throw new BadRequestException(
-          'Selected section does not exist',
-        );
-      }
+    if (data.sectionId !== undefined) {
+      await this.ensureSection(data.sectionId);
     }
 
-    if (data.categoryId) {
-      const category =
-        await this.prisma.category.findUnique({
-          where: {
-            id: data.categoryId,
-          },
-        });
-
-      if (!category) {
-        throw new BadRequestException(
-          'Selected category does not exist',
-        );
-      }
+    if (data.categoryId !== undefined && data.categoryId !== null) {
+      await this.ensureCategory(data.categoryId);
     }
 
-    if (data.audienceIds) {
-      await this.validateAudiences(
-        data.audienceIds,
-      );
+    if (data.audienceIds !== undefined) {
+      await this.validateAudiences(data.audienceIds);
     }
 
-    if (data.productIds) {
+    const finalCategoryId =
+      data.categoryId !== undefined
+        ? data.categoryId
+        : existing.categoryId;
+
+    if (data.productIds !== undefined) {
       await this.validateProducts(
         data.productIds,
-        data.categoryId ??
-          existing.categoryId ??
-          undefined,
+        finalCategoryId ?? undefined,
       );
     }
 
-    return this.prisma.$transaction(
-      async (tx) => {
-        if (data.audienceIds) {
-          await tx.questionnaireItemAudience.deleteMany({
-            where: {
-              itemId: id,
-            },
-          });
+    const finalApplyToAll =
+      data.applyToAllProducts ?? existing.applyToAllProducts;
 
+    if (
+      finalApplyToAll === false &&
+      data.applyToAllProducts === false &&
+      data.productIds !== undefined &&
+      !data.productIds.length
+    ) {
+      throw new BadRequestException(
+        'Select at least one product when Apply To All Products is disabled',
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (data.audienceIds !== undefined) {
+        await tx.questionnaireItemAudience.deleteMany({
+          where: { itemId: id },
+        });
+
+        const audienceIds = this.cleanIds(data.audienceIds);
+
+        if (audienceIds.length) {
           await tx.questionnaireItemAudience.createMany({
-            data: data.audienceIds.map(
-              (audienceId) => ({
-                itemId: id,
-                audienceId,
-              }),
-            ),
+            data: audienceIds.map((audienceId) => ({
+              itemId: id,
+              audienceId,
+            })),
+            skipDuplicates: true,
           });
         }
+      }
+
+      if (
+        data.productIds !== undefined ||
+        data.applyToAllProducts === true
+      ) {
+        await tx.questionnaireItemProduct.deleteMany({
+          where: { itemId: id },
+        });
 
         if (
-          data.productIds ||
-          data.applyToAllProducts === true
+          finalApplyToAll === false &&
+          data.productIds?.length
         ) {
-          await tx.questionnaireItemProduct.deleteMany({
-            where: {
+          await tx.questionnaireItemProduct.createMany({
+            data: this.cleanIds(data.productIds).map((productId) => ({
               itemId: id,
-            },
+              productId,
+            })),
+            skipDuplicates: true,
           });
-
-          if (
-            data.applyToAllProducts === false &&
-            data.productIds?.length
-          ) {
-            await tx.questionnaireItemProduct.createMany({
-              data: data.productIds.map(
-                (productId) => ({
-                  itemId: id,
-                  productId,
-                }),
-              ),
-            });
-          }
         }
+      }
 
-        return tx.questionnaireItem.update({
-          where: {
-            id,
-          },
-
-          data: {
-            ...(data.name !== undefined
-              ? {
-                  name: data.name.trim(),
-                }
-              : {}),
-
-            ...(data.questionText !== undefined
-              ? {
-                  questionText:
-                    data.questionText.trim(),
-                }
-              : {}),
-
-            ...(data.answerType !== undefined
-              ? {
-                  answerType:
-                    data.answerType,
-                }
-              : {}),
-
-            ...(data.sectionId !== undefined
-              ? {
-                  sectionId:
-                    data.sectionId,
-                }
-              : {}),
-
-            ...(data.categoryId !== undefined
-              ? {
-                  categoryId:
-                    data.categoryId,
-                }
-              : {}),
-
-            ...(data.displayOrder !== undefined
-              ? {
-                  displayOrder:
-                    data.displayOrder,
-                }
-              : {}),
-
-            ...(data.isRequired !== undefined
-              ? {
-                  isRequired:
-                    data.isRequired,
-                }
-              : {}),
-
-            ...(data.isActive !== undefined
-              ? {
-                  isActive:
-                    data.isActive,
-                }
-              : {}),
-
-            ...(data.applyToAllProducts !==
-            undefined
-              ? {
-                  applyToAllProducts:
-                    data.applyToAllProducts,
-                }
-              : {}),
-          },
-
-          include: {
-            section: true,
-            category: true,
-            options: true,
-
-            audiences: {
-              include: {
-                audience: true,
-              },
-            },
-
-            productMappings: {
-              include: {
-                product: true,
-              },
-            },
-          },
-        });
-      },
-    );
+      return tx.questionnaireItem.update({
+        where: { id },
+        data: {
+          ...(data.name !== undefined
+            ? { name: data.name.trim() }
+            : {}),
+          ...(data.questionText !== undefined
+            ? { questionText: data.questionText.trim() }
+            : {}),
+          ...(data.answerType !== undefined
+            ? { answerType: data.answerType }
+            : {}),
+          ...(data.sectionId !== undefined
+            ? { sectionId: data.sectionId }
+            : {}),
+          ...(data.categoryId !== undefined
+            ? { categoryId: data.categoryId }
+            : {}),
+          ...(data.displayOrder !== undefined
+            ? { displayOrder: data.displayOrder }
+            : {}),
+          ...(data.isRequired !== undefined
+            ? { isRequired: data.isRequired }
+            : {}),
+          ...(data.isActive !== undefined
+            ? { isActive: data.isActive }
+            : {}),
+          ...(data.applyToAllProducts !== undefined
+            ? { applyToAllProducts: data.applyToAllProducts }
+            : {}),
+        },
+        include: this.questionInclude(),
+      });
+    });
   }
 
   async removeQuestion(id: number) {
     await this.getQuestion(id);
 
+    // Preserve old behavior for the current admin UI.
     await this.prisma.questionnaireItem.delete({
-      where: {
-        id,
-      },
+      where: { id },
     });
 
     return {
@@ -619,31 +416,18 @@ export class QuestionnaireService {
     };
   }
 
-  // =========================================================
-  // OPTIONS + DEDUCTION
-  // =========================================================
-
-  async addOption(
-    questionId: number,
-    data: {
-      label: string;
-      value: string;
-      deductionPercent?: number;
-      displayOrder?: number;
-      isActive?: boolean;
-    },
-  ) {
+  async addOption(questionId: number, data: OptionPayload) {
     await this.getQuestion(questionId);
 
-    const value =
-      this.normalizeCode(data.value);
+    if (!data.label?.trim() || !data.value?.trim()) {
+      throw new BadRequestException('Option label and value are required');
+    }
+
+    const value = this.normalizeCode(data.value);
 
     const existing =
       await this.prisma.questionnaireOption.findFirst({
-        where: {
-          itemId: questionId,
-          value,
-        },
+        where: { itemId: questionId, value },
       });
 
     if (existing) {
@@ -652,39 +436,51 @@ export class QuestionnaireService {
       );
     }
 
+    await this.validateCapabilities(data.capabilityIds || []);
+
+    const deduction = this.normalizeOptionDeduction(data);
+
     return this.prisma.questionnaireOption.create({
       data: {
         itemId: questionId,
-
         label: data.label.trim(),
         value,
+        issueCode: data.issueCode
+          ? this.normalizeCode(data.issueCode)
+          : this.normalizeCode(`${questionId}_${value}`),
 
         deductionPercent:
-          data.deductionPercent ?? 0,
+          deduction.type === 'PERCENTAGE' ? deduction.value : 0,
 
-        displayOrder:
-          data.displayOrder ?? 0,
+        deductionType: deduction.type,
+        deductionValue: deduction.value,
+        deductionTrigger: data.deductionTrigger ?? 'SELECTED',
+        displayOrder: data.displayOrder ?? 0,
+        isActive: data.isActive ?? true,
 
-        isActive:
-          data.isActive ?? true,
+        capabilities: data.capabilityIds?.length
+          ? {
+              create: this.cleanIds(data.capabilityIds).map(
+                (capabilityId) => ({ capabilityId }),
+              ),
+            }
+          : undefined,
+      },
+      include: {
+        capabilities: {
+          include: { capability: true },
+        },
       },
     });
   }
 
   async updateOption(
     optionId: number,
-    data: {
-      label?: string;
-      deductionPercent?: number;
-      displayOrder?: number;
-      isActive?: boolean;
-    },
+    data: Partial<OptionPayload>,
   ) {
     const option =
       await this.prisma.questionnaireOption.findUnique({
-        where: {
-          id: optionId,
-        },
+        where: { id: optionId },
       });
 
     if (!option) {
@@ -693,48 +489,97 @@ export class QuestionnaireService {
       );
     }
 
-    return this.prisma.questionnaireOption.update({
-      where: {
-        id: optionId,
-      },
+    if (data.capabilityIds !== undefined) {
+      await this.validateCapabilities(data.capabilityIds);
+    }
 
-      data: {
-        ...(data.label !== undefined
-          ? {
-              label: data.label.trim(),
-            }
-          : {}),
+    let deductionData = {};
 
-        ...(data.deductionPercent !== undefined
-          ? {
-              deductionPercent:
-                data.deductionPercent,
-            }
-          : {}),
+    if (
+      data.deductionValue !== undefined ||
+      data.deductionPercent !== undefined ||
+      data.deductionType !== undefined
+    ) {
+      const normalized = this.normalizeOptionDeduction({
+  deductionType: data.deductionType ?? option.deductionType,
+  deductionValue:
+    data.deductionValue !== undefined
+      ? data.deductionValue
+      : data.deductionPercent !== undefined
+        ? data.deductionPercent
+        : Number(option.deductionValue),
+  deductionPercent: data.deductionPercent,
+});
 
-        ...(data.displayOrder !== undefined
-          ? {
-              displayOrder:
-                data.displayOrder,
-            }
-          : {}),
+      deductionData = {
+        deductionType: normalized.type,
+        deductionValue: normalized.value,
+        deductionPercent:
+          normalized.type === 'PERCENTAGE'
+            ? normalized.value
+            : 0,
+      };
+    }
 
-        ...(data.isActive !== undefined
-          ? {
-              isActive:
-                data.isActive,
-            }
-          : {}),
-      },
+    return this.prisma.$transaction(async (tx) => {
+      if (data.capabilityIds !== undefined) {
+        await tx.questionnaireOptionCapability.deleteMany({
+          where: { optionId },
+        });
+
+        const ids = this.cleanIds(data.capabilityIds);
+
+        if (ids.length) {
+          await tx.questionnaireOptionCapability.createMany({
+            data: ids.map((capabilityId) => ({
+              optionId,
+              capabilityId,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      }
+
+      return tx.questionnaireOption.update({
+        where: { id: optionId },
+        data: {
+          ...(data.label !== undefined
+            ? { label: data.label.trim() }
+            : {}),
+          ...(data.value !== undefined
+            ? { value: this.normalizeCode(data.value) }
+            : {}),
+          ...(data.issueCode !== undefined
+            ? {
+                issueCode: data.issueCode
+                  ? this.normalizeCode(data.issueCode)
+                  : null,
+              }
+            : {}),
+          ...deductionData,
+          ...(data.deductionTrigger !== undefined
+            ? { deductionTrigger: data.deductionTrigger }
+            : {}),
+          ...(data.displayOrder !== undefined
+            ? { displayOrder: data.displayOrder }
+            : {}),
+          ...(data.isActive !== undefined
+            ? { isActive: data.isActive }
+            : {}),
+        },
+        include: {
+          capabilities: {
+            include: { capability: true },
+          },
+        },
+      });
     });
   }
 
   async removeOption(optionId: number) {
     const option =
       await this.prisma.questionnaireOption.findUnique({
-        where: {
-          id: optionId,
-        },
+        where: { id: optionId },
       });
 
     if (!option) {
@@ -744,9 +589,7 @@ export class QuestionnaireService {
     }
 
     await this.prisma.questionnaireOption.delete({
-      where: {
-        id: optionId,
-      },
+      where: { id: optionId },
     });
 
     return {
@@ -755,27 +598,16 @@ export class QuestionnaireService {
     };
   }
 
-  // =========================================================
-  // CONDITIONAL QUESTIONS
-  // =========================================================
-
-  async addCondition(
-    itemId: number,
-    dependsOnOptionId: number,
-  ) {
+  async addCondition(itemId: number, dependsOnOptionId: number) {
     await this.getQuestion(itemId);
 
     const option =
       await this.prisma.questionnaireOption.findUnique({
-        where: {
-          id: dependsOnOptionId,
-        },
+        where: { id: dependsOnOptionId },
       });
 
     if (!option) {
-      throw new BadRequestException(
-        'Parent option does not exist',
-      );
+      throw new BadRequestException('Parent option does not exist');
     }
 
     const existing =
@@ -789,37 +621,26 @@ export class QuestionnaireService {
       });
 
     if (existing) {
-      throw new BadRequestException(
-        'Condition already exists',
-      );
+      throw new BadRequestException('Condition already exists');
     }
 
     return this.prisma.questionnaireCondition.create({
-      data: {
-        itemId,
-        dependsOnOptionId,
-      },
+      data: { itemId, dependsOnOptionId },
     });
   }
 
   async removeCondition(id: number) {
     const condition =
       await this.prisma.questionnaireCondition.findUnique({
-        where: {
-          id,
-        },
+        where: { id },
       });
 
     if (!condition) {
-      throw new NotFoundException(
-        'Condition does not exist',
-      );
+      throw new NotFoundException('Condition does not exist');
     }
 
     await this.prisma.questionnaireCondition.delete({
-      where: {
-        id,
-      },
+      where: { id },
     });
 
     return {
@@ -828,16 +649,87 @@ export class QuestionnaireService {
     };
   }
 
-  // =========================================================
-  // HELPERS
-  // =========================================================
+  private questionInclude() {
+    return {
+      section: true,
+      category: true,
+      options: {
+        orderBy: { displayOrder: 'asc' as const },
+        include: {
+          capabilities: {
+            include: { capability: true },
+          },
+        },
+      },
+      audiences: {
+        include: { audience: true },
+      },
+      productMappings: {
+        include: {
+          product: {
+            include: {
+              brand: true,
+              category: true,
+              series: true,
+            },
+          },
+        },
+      },
+      conditions: {
+        include: {
+          dependsOnOption: {
+            include: { item: true },
+          },
+        },
+      },
+    };
+  }
 
   private normalizeCode(value: string) {
-    return value
+    return String(value || '')
       .trim()
       .toUpperCase()
       .replace(/[^A-Z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '');
+  }
+
+  private cleanIds(ids: number[]) {
+    return [
+      ...new Set(
+        (ids || [])
+          .map(Number)
+          .filter((id) => Number.isInteger(id) && id > 0),
+      ),
+    ];
+  }
+
+  private normalizeOptionDeduction(data: {
+    deductionType?: DeductionType;
+    deductionValue?: number;
+    deductionPercent?: number;
+  }) {
+    const type = data.deductionType ?? 'PERCENTAGE';
+
+    const rawValue =
+      data.deductionValue !== undefined
+        ? data.deductionValue
+        : data.deductionPercent ?? 0;
+
+    const value = Number(rawValue);
+
+    if (!Number.isFinite(value) || value < 0) {
+      throw new BadRequestException(
+        'Deduction value must be zero or greater',
+      );
+    }
+
+    if (type === 'PERCENTAGE' && value > 100) {
+      throw new BadRequestException(
+        'Percentage deduction must be between 0 and 100',
+      );
+    }
+
+    return { type, value };
   }
 
   private async validateQuestionMasterData(data: {
@@ -846,43 +738,23 @@ export class QuestionnaireService {
     audienceIds: number[];
     productIds?: number[];
     applyToAllProducts?: boolean;
-    options: {
-      label: string;
-      value: string;
-      deductionPercent?: number;
-    }[];
+    options: OptionPayload[];
+    name: string;
+    questionText: string;
   }) {
-    const section =
-      await this.prisma.questionnaireSection.findUnique({
-        where: {
-          id: data.sectionId,
-        },
-      });
-
-    if (!section) {
+    if (!data.name?.trim() || !data.questionText?.trim()) {
       throw new BadRequestException(
-        'Selected questionnaire section does not exist',
+        'Question name and question text are required',
       );
     }
 
-    if (data.categoryId) {
-      const category =
-        await this.prisma.category.findUnique({
-          where: {
-            id: data.categoryId,
-          },
-        });
+    await this.ensureSection(data.sectionId);
 
-      if (!category) {
-        throw new BadRequestException(
-          'Selected category does not exist',
-        );
-      }
+    if (data.categoryId) {
+      await this.ensureCategory(data.categoryId);
     }
 
-    await this.validateAudiences(
-      data.audienceIds,
-    );
+    await this.validateAudiences(data.audienceIds);
 
     if (!data.options?.length) {
       throw new BadRequestException(
@@ -890,37 +762,29 @@ export class QuestionnaireService {
       );
     }
 
-    const normalizedOptions =
-      data.options.map((option) =>
-        this.normalizeCode(option.value),
-      );
+    const normalizedOptions = data.options.map((option) =>
+      this.normalizeCode(option.value),
+    );
 
     if (
-      new Set(normalizedOptions).size !==
-      normalizedOptions.length
+      normalizedOptions.some((value) => !value) ||
+      new Set(normalizedOptions).size !== normalizedOptions.length
     ) {
       throw new BadRequestException(
-        'Duplicate option values are not allowed',
+        'Option values are required and must be unique',
       );
     }
 
     for (const option of data.options) {
-      const deduction =
-        Number(option.deductionPercent ?? 0);
-
-      if (
-        deduction < 0 ||
-        deduction > 100
-      ) {
-        throw new BadRequestException(
-          'Deduction percentage must be between 0 and 100',
-        );
+      if (!option.label?.trim()) {
+        throw new BadRequestException('Option label is required');
       }
+
+      this.normalizeOptionDeduction(option);
+      await this.validateCapabilities(option.capabilityIds || []);
     }
 
-    if (
-      data.applyToAllProducts === false
-    ) {
+    if (data.applyToAllProducts === false) {
       if (!data.productIds?.length) {
         throw new BadRequestException(
           'Select at least one product when Apply To All Products is disabled',
@@ -934,35 +798,30 @@ export class QuestionnaireService {
     }
   }
 
-  private async validateAudiences(
-    audienceIds: number[],
-  ) {
-    if (!audienceIds?.length) {
+  private async validateAudiences(audienceIds: number[]) {
+    const ids = this.cleanIds(audienceIds);
+
+    if (!ids.length) {
       throw new BadRequestException(
         'At least one audience is required',
       );
     }
 
-    if (
-      new Set(audienceIds).size !==
-      audienceIds.length
-    ) {
+    if (ids.length !== audienceIds.length) {
       throw new BadRequestException(
-        'Duplicate audience is not allowed',
+        'Duplicate or invalid audience is not allowed',
       );
     }
 
     const count =
       await this.prisma.questionnaireAudience.count({
         where: {
-          id: {
-            in: audienceIds,
-          },
+          id: { in: ids },
           isActive: true,
         },
       });
 
-    if (count !== audienceIds.length) {
+    if (count !== ids.length) {
       throw new BadRequestException(
         'One or more selected audiences are invalid',
       );
@@ -973,49 +832,82 @@ export class QuestionnaireService {
     productIds: number[],
     categoryId?: number,
   ) {
-    if (
-      new Set(productIds).size !==
-      productIds.length
-    ) {
+    const ids = this.cleanIds(productIds);
+
+    if (ids.length !== productIds.length) {
       throw new BadRequestException(
-        'Duplicate product mapping is not allowed',
+        'Duplicate or invalid product mapping is not allowed',
       );
     }
 
-    const products =
-      await this.prisma.product.findMany({
-        where: {
-          id: {
-            in: productIds,
-          },
-        },
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, categoryId: true },
+    });
 
-        select: {
-          id: true,
-          categoryId: true,
-        },
-      });
-
-    if (
-      products.length !== productIds.length
-    ) {
+    if (products.length !== ids.length) {
       throw new BadRequestException(
         'One or more selected products do not exist',
       );
     }
 
-    if (categoryId) {
-      const wrongCategory =
-        products.some(
-          (product) =>
-            product.categoryId !== categoryId,
-        );
+    if (
+      categoryId &&
+      products.some((product) => product.categoryId !== categoryId)
+    ) {
+      throw new BadRequestException(
+        'Selected product does not belong to the selected category',
+      );
+    }
+  }
 
-      if (wrongCategory) {
-        throw new BadRequestException(
-          'Selected product does not belong to the selected category',
-        );
-      }
+  private async validateCapabilities(capabilityIds: number[]) {
+    const ids = this.cleanIds(capabilityIds);
+
+    if (!ids.length) return;
+
+    if (ids.length !== capabilityIds.length) {
+      throw new BadRequestException(
+        'Duplicate or invalid capability is not allowed',
+      );
+    }
+
+    const count = await this.prisma.deviceCapability.count({
+      where: {
+        id: { in: ids },
+        isActive: true,
+      },
+    });
+
+    if (count !== ids.length) {
+      throw new BadRequestException(
+        'One or more selected capabilities are invalid',
+      );
+    }
+  }
+
+  private async ensureSection(sectionId: number) {
+    const section =
+      await this.prisma.questionnaireSection.findUnique({
+        where: { id: Number(sectionId) },
+      });
+
+    if (!section) {
+      throw new BadRequestException(
+        'Selected questionnaire section does not exist',
+      );
+    }
+  }
+
+  private async ensureCategory(categoryId: number) {
+    const category = await this.prisma.category.findUnique({
+      where: { id: Number(categoryId) },
+    });
+
+    if (!category) {
+      throw new BadRequestException(
+        'Selected category does not exist',
+      );
     }
   }
 }

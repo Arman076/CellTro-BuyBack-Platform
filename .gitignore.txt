@@ -1,0 +1,30 @@
+# Next.js build/cache
+.next/
+**/.next/
+
+# Node modules
+node_modules/
+**/node_modules/
+
+# Environment files
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# VS Code local settings
+.vscode/
+
+# Runtime uploads
+backend/uploads/
+
+# Temporary project structure files
+project-structure.txt
+
+# Logs
+*.log
