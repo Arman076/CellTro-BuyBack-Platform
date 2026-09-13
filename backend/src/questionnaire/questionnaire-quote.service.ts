@@ -9,7 +9,8 @@ import { PrismaService } from '../prisma/prisma/prisma.service.js';
 
 type AnswerInput = {
   itemId: number;
-  optionId: number;
+  optionId?: number;
+  optionIds?: number[];
   childOptionIds?: number[];
 };
 
@@ -140,7 +141,68 @@ export class QuestionnaireQuoteService {
     };
   }
 
-  private aggregateSections(lines: AppliedLine[]) {
+  private aggregateAmounts(
+    deductions: number[],
+    mode: 'MAX' | 'SUM' | 'SINGLE',
+  ) {
+    if (!deductions.length) return 0;
+    if (mode === 'MAX' || mode === 'SINGLE') {
+      return Math.max(0, ...deductions);
+    }
+    return deductions.reduce((sum, value) => sum + Math.max(0, value), 0);
+  }
+
+  private applyAggregationCap(
+    amount: number,
+    policy: any | null,
+    basePrice: number,
+  ) {
+    if (!policy || policy.capType == null || policy.capValue == null) {
+      return Math.max(0, amount);
+    }
+
+    const type = String(policy.capType).toUpperCase();
+    const value = this.toNumber(policy.capValue);
+    const cap = type === 'FIXED'
+      ? Math.max(0, value)
+      : Math.max(0, (basePrice * Math.min(100, value)) / 100);
+
+    return Math.min(Math.max(0, amount), cap);
+  }
+
+  private resolveAggregationPolicy(
+    policies: any[],
+    level: 'QUESTION' | 'SECTION',
+    targetId: number,
+    productId: number,
+  ) {
+    const matching = policies.filter(
+      (policy: any) =>
+        policy.isActive &&
+        policy.level === level &&
+        Number(policy.targetId) === Number(targetId),
+    );
+
+    return (
+      matching.find(
+        (policy: any) =>
+          policy.scope === 'PRODUCT' &&
+          Number(policy.productId) === Number(productId),
+      ) ||
+      matching.find((policy: any) => policy.scope === 'GLOBAL') ||
+      null
+    );
+  }
+
+  private aggregateSections(
+    lines: AppliedLine[],
+    policies: any[],
+    basePrice: number,
+    productId: number,
+  ) {
+    // V10.1: aggregation/cap is intentionally SECTION-level only.
+    // Individual issues keep their configured deduction. The section decides
+    // whether those deductions SUM, MAX, or SINGLE and then applies one cap.
     const bySection = new Map<number, AppliedLine[]>();
     for (const line of lines) {
       const bucket = bySection.get(line.sectionId) || [];
@@ -149,14 +211,28 @@ export class QuestionnaireQuoteService {
     }
 
     let total = 0;
-    for (const sectionLines of bySection.values()) {
-      const mode = sectionLines[0]?.calculationMode || 'SUM';
-      if (mode === 'MAX' || mode === 'SINGLE') {
-        total += Math.max(0, ...sectionLines.map((x) => x.deduction));
-      } else {
-        total += sectionLines.reduce((sum, x) => sum + x.deduction, 0);
-      }
+    for (const [sectionId, sectionLines] of bySection.entries()) {
+      const sectionPolicy = this.resolveAggregationPolicy(
+        policies,
+        'SECTION',
+        sectionId,
+        productId,
+      );
+
+      const mode = String(
+        sectionPolicy?.calculationMode ||
+          sectionLines[0]?.calculationMode ||
+          'SUM',
+      ).toUpperCase() as 'MAX' | 'SUM' | 'SINGLE';
+
+      const aggregated = this.aggregateAmounts(
+        sectionLines.map((line) => line.deduction),
+        mode,
+      );
+
+      total += this.applyAggregationCap(aggregated, sectionPolicy, basePrice);
     }
+
     return total;
   }
 
@@ -261,42 +337,40 @@ export class QuestionnaireQuoteService {
 
     for (const answer of answers) {
       const question = questionById.get(Number(answer.itemId));
-      if (!question) throw new BadRequestException('One questionnaire answer is invalid');
-
-      const mainOptions = question.options.filter((o: any) => o.parentOptionId === null);
-      const option = mainOptions.find((o: any) => o.id === Number(answer.optionId));
-      if (!option) throw new BadRequestException('Selected answer does not belong to the question');
-      if (!this.capabilityAllowed(option, productCapabilityIds) || !this.optionApplicable(option, context)) {
-        throw new BadRequestException('Selected answer is not applicable to this product');
+      if (!question) {
+        throw new BadRequestException('One questionnaire answer is invalid');
       }
 
-      const children = question.options
-        .filter((o: any) => o.parentOptionId === option.id)
+      const mainOptions = question.options
+        .filter((o: any) => o.parentOptionId === null)
         .filter((o: any) => this.capabilityAllowed(o, productCapabilityIds))
         .filter((o: any) => this.optionApplicable(o, context));
 
-      const applicableChildIds = new Set(children.map((c: any) => c.id));
-      const selectedChildIds = [...new Set((answer.childOptionIds || []).map(Number))];
-      if (selectedChildIds.some((id) => !applicableChildIds.has(id))) {
-        throw new BadRequestException('One selected sub-option is not applicable');
+      const mainOptionIds = new Set(mainOptions.map((o: any) => Number(o.id)));
+      const submittedMainIds = [
+        ...new Set(
+          (question.answerType === 'MULTI_SELECT'
+            ? answer.optionIds || (answer.optionId ? [answer.optionId] : [])
+            : answer.optionId
+              ? [answer.optionId]
+              : answer.optionIds || []
+          ).map(Number),
+        ),
+      ];
+
+      if (question.answerType !== 'MULTI_SELECT' && submittedMainIds.length !== 1) {
+        throw new BadRequestException('Please select exactly one answer for this question');
       }
 
-      if (option.showChildOptions) {
-        const min = option.requireChildSelection
-          ? Math.max(1, option.minChildSelections || 1)
-          : option.minChildSelections || 0;
-        if (selectedChildIds.length < min) {
-          throw new BadRequestException(`Minimum ${min} sub-option selection required`);
-        }
-        if (option.maxChildSelections && selectedChildIds.length > option.maxChildSelections) {
-          throw new BadRequestException('Too many sub-options selected');
-        }
-        if (option.childSelectionMode === 'SINGLE' && selectedChildIds.length > 1) {
-          throw new BadRequestException('Only one sub-option can be selected');
-        }
-      } else if (selectedChildIds.length) {
-        throw new BadRequestException('Sub-options are not allowed for this answer');
+      if (question.answerType === 'MULTI_SELECT' && question.isRequired && submittedMainIds.length === 0) {
+        throw new BadRequestException('Please select at least one answer for this question');
       }
+
+      if (submittedMainIds.some((id) => !mainOptionIds.has(id))) {
+        throw new BadRequestException('Selected answer does not belong to the question or is not applicable');
+      }
+
+      const selectedMainSet = new Set(submittedMainIds);
 
       const maybePush = (candidate: any, shouldDeduct: boolean) => {
         if (!shouldDeduct) return;
@@ -317,19 +391,87 @@ export class QuestionnaireQuoteService {
         });
       };
 
+      // MULTI_SELECT: each applicable main option can independently deduct on
+      // SELECTED or MISSING. This is useful for direct checkbox questions.
+      if (question.answerType === 'MULTI_SELECT') {
+        if (mainOptions.some((o: any) => o.showChildOptions)) {
+          throw new BadRequestException(
+            'Multi Choice main options cannot open detailed issue groups. Use Yes/No + detailed issues for grouped selections.',
+          );
+        }
+
+        for (const option of mainOptions) {
+          const selected = selectedMainSet.has(Number(option.id));
+          const shouldDeduct =
+            option.deductionTrigger === 'MISSING' ? !selected : selected;
+          maybePush(option, shouldDeduct);
+        }
+        continue;
+      }
+
+      const option = mainOptions.find((o: any) =>
+        selectedMainSet.has(Number(o.id)),
+      );
+      if (!option) {
+        throw new BadRequestException('Selected answer does not belong to the question');
+      }
+
+      const children = question.options
+        .filter((o: any) => o.parentOptionId === option.id)
+        .filter((o: any) => this.capabilityAllowed(o, productCapabilityIds))
+        .filter((o: any) => this.optionApplicable(o, context));
+
+      const applicableChildIds = new Set(children.map((c: any) => Number(c.id)));
+      const selectedChildIds = [
+        ...new Set((answer.childOptionIds || []).map(Number)),
+      ];
+
+      if (selectedChildIds.some((id) => !applicableChildIds.has(id))) {
+        throw new BadRequestException('One selected sub-option is not applicable');
+      }
+
+      if (option.showChildOptions) {
+        const min = option.requireChildSelection
+          ? Math.max(1, option.minChildSelections || 1)
+          : option.minChildSelections || 0;
+        if (selectedChildIds.length < min) {
+          throw new BadRequestException(
+            `Minimum ${min} sub-option selection required`,
+          );
+        }
+        if (
+          option.maxChildSelections &&
+          selectedChildIds.length > option.maxChildSelections
+        ) {
+          throw new BadRequestException('Too many sub-options selected');
+        }
+        if (
+          option.childSelectionMode === 'SINGLE' &&
+          selectedChildIds.length > 1
+        ) {
+          throw new BadRequestException('Only one sub-option can be selected');
+        }
+      } else if (selectedChildIds.length) {
+        throw new BadRequestException('Sub-options are not allowed for this answer');
+      }
+
       maybePush(option, option.deductionTrigger === 'SELECTED');
 
       if (option.showChildOptions) {
         const selectedSet = new Set(selectedChildIds);
         for (const child of children) {
-          const selected = selectedSet.has(child.id);
-          const shouldDeduct = child.deductionTrigger === 'MISSING' ? !selected : selected;
+          const selected = selectedSet.has(Number(child.id));
+          const shouldDeduct =
+            child.deductionTrigger === 'MISSING' ? !selected : selected;
           maybePush(child, shouldDeduct);
         }
       }
     }
 
-    // Global double-deduction guard. Same issueCode is charged only once.
+    // Global double-deduction guard. Same physical defect (issueCode) is charged once.
+    // This is deliberately before section aggregation, so duplicate UI paths cannot inflate a section.
+    // Future agent flow must reuse the same issueCode and merge AGENT > CUSTOMER observations
+    // before they reach this pricing stage. If both confirm the same issue, this guard still charges once.
     // If duplicate representations have different values, keep the larger applicable deduction.
     const deduped = new Map<string, AppliedLine>();
     for (const line of candidates) {
@@ -339,7 +481,25 @@ export class QuestionnaireQuoteService {
     }
     const lines = [...deduped.values()];
 
-    const rawDeduction = this.aggregateSections(lines);
+    // One lightweight policy query for the full quote calculation.
+    // PRODUCT policies override GLOBAL policies; no per-question database calls.
+    const aggregationPolicies =
+      await this.prisma.questionnaireAggregationPolicy.findMany({
+        where: {
+          isActive: true,
+          OR: [
+            { scope: 'GLOBAL' },
+            { scope: 'PRODUCT', productId: context.productId },
+          ],
+        },
+      });
+
+    const rawDeduction = this.aggregateSections(
+      lines,
+      aggregationPolicies,
+      basePrice,
+      context.productId,
+    );
     const hasSevereIssue = lines.some((x) => x.severity === 'SEVERE');
 
     const productPolicy = await this.prisma.questionnaireQuotePolicy.findUnique({

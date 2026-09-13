@@ -1199,4 +1199,148 @@ export class QuestionnaireBranchService {
       })),
     };
   }
+
+  async getAggregationPolicies(productId?: number | null) {
+    const effectiveProductId = productId == null ? null : Number(productId);
+    if (
+      effectiveProductId != null &&
+      (!Number.isInteger(effectiveProductId) || effectiveProductId <= 0)
+    ) {
+      throw new BadRequestException('Invalid productId');
+    }
+
+    const policies = await this.prisma.questionnaireAggregationPolicy.findMany({
+      where: effectiveProductId
+        ? {
+            level: 'SECTION',
+            OR: [
+              { scope: 'GLOBAL' },
+              { scope: 'PRODUCT', productId: effectiveProductId },
+            ],
+          }
+        : { level: 'SECTION', scope: 'GLOBAL' },
+      orderBy: [
+        { level: 'asc' },
+        { targetId: 'asc' },
+        { scope: 'asc' },
+        { id: 'asc' },
+      ],
+    });
+
+    return policies;
+  }
+
+  async saveAggregationPolicy(body: any) {
+    const level = String(body?.level || '').trim().toUpperCase();
+    const targetId = Number(body?.targetId);
+    const scope = String(body?.scope || 'GLOBAL').trim().toUpperCase();
+    const productId = scope === 'PRODUCT' ? Number(body?.productId) : null;
+    const calculationMode = String(body?.calculationMode || '').trim().toUpperCase();
+    const rawCapType = body?.capType == null || body?.capType === ''
+      ? null
+      : String(body.capType).trim().toUpperCase();
+    const capValue = rawCapType ? Number(body?.capValue) : null;
+
+    if (level !== 'SECTION') {
+      throw new BadRequestException('Only SECTION-level aggregation policy is supported');
+    }
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      throw new BadRequestException('Valid targetId is required');
+    }
+    if (!['GLOBAL', 'PRODUCT'].includes(scope)) {
+      throw new BadRequestException('scope must be GLOBAL or PRODUCT');
+    }
+    if (
+      scope === 'PRODUCT' &&
+      (productId == null || !Number.isInteger(productId) || productId <= 0)
+    ) {
+      throw new BadRequestException('Valid productId is required for PRODUCT scope');
+    }
+    if (!['MAX', 'SUM', 'SINGLE'].includes(calculationMode)) {
+      throw new BadRequestException('calculationMode must be MAX, SUM or SINGLE');
+    }
+    if (rawCapType && !['PERCENTAGE', 'FIXED'].includes(rawCapType)) {
+      throw new BadRequestException('capType must be PERCENTAGE, FIXED or empty');
+    }
+    if (rawCapType) {
+      if (!Number.isFinite(capValue) || Number(capValue) < 0) {
+        throw new BadRequestException('capValue must be 0 or greater');
+      }
+      if (rawCapType === 'PERCENTAGE' && Number(capValue) > 100) {
+        throw new BadRequestException('Percentage cap must be between 0 and 100');
+      }
+    }
+
+    const section = await this.prisma.questionnaireSection.findUnique({
+      where: { id: targetId },
+      select: { id: true },
+    });
+    if (!section) throw new NotFoundException('Questionnaire section does not exist');
+
+    if (scope === 'PRODUCT') {
+      const product = await this.prisma.product.findUnique({
+        where: { id: productId! },
+        select: { id: true },
+      });
+      if (!product) throw new NotFoundException('Selected product does not exist');
+    }
+
+    const key = scope === 'GLOBAL'
+      ? `${level}:${targetId}:GLOBAL`
+      : `${level}:${targetId}:PRODUCT:${productId}`;
+
+    const data: any = {
+      level,
+      targetId,
+      scope: scope as any,
+      productId,
+      calculationMode: calculationMode as any,
+      capType: rawCapType as any,
+      capValue,
+      isActive: body?.isActive !== false,
+    };
+
+    return this.prisma.questionnaireAggregationPolicy.upsert({
+      where: { key },
+      create: { key, ...data },
+      update: data,
+    });
+  }
+
+  async deleteAggregationPolicy(
+    levelInput: string,
+    targetIdInput: number,
+    productIdInput?: number | null,
+  ) {
+    const level = String(levelInput || '').trim().toUpperCase();
+    const targetId = Number(targetIdInput);
+    const productId = productIdInput == null ? null : Number(productIdInput);
+
+    if (level !== 'SECTION') {
+      throw new BadRequestException('Only SECTION-level aggregation policy is supported');
+    }
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      throw new BadRequestException('Valid targetId is required');
+    }
+    if (
+      productId != null &&
+      (!Number.isInteger(productId) || productId <= 0)
+    ) {
+      throw new BadRequestException('Invalid productId');
+    }
+
+    const key = productId
+      ? `${level}:${targetId}:PRODUCT:${productId}`
+      : `${level}:${targetId}:GLOBAL`;
+
+    const existing = await this.prisma.questionnaireAggregationPolicy.findUnique({
+      where: { key },
+      select: { id: true },
+    });
+    if (!existing) return { success: true, deleted: false };
+
+    await this.prisma.questionnaireAggregationPolicy.delete({ where: { key } });
+    return { success: true, deleted: true };
+  }
+
 }

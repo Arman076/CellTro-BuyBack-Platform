@@ -1,0 +1,52 @@
+.input {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.75rem;
+  padding: 0.72rem 0.85rem;
+  background: #ffffff;
+  outline: none;
+  font-size: 0.875rem;
+}
+
+.input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgb(99 102 241 / 0.12);
+}
+
+.input:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
+.fieldLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #475569;
+}
+
+.btnPrimary {
+  border: 0;
+  border-radius: 0.75rem;
+  background: #0f172a;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.btnPrimary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btnSecondary {
+  border: 1px solid #cbd5e1;
+  border-radius: 0.75rem;
+  background: #ffffff;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #334155;
+  cursor: pointer;
+}

@@ -64,7 +64,8 @@ type EffectiveResponse = {
 
 type Answer = {
   itemId: number;
-  optionId: number;
+  optionId?: number;
+  optionIds?: number[];
   childOptionIds: number[];
 };
 
@@ -145,11 +146,16 @@ export default function ExactValueModal({
   const currentAnswer = currentQuestion ? answers[currentQuestion.id] : null;
 
   const selectedOption =
-    currentQuestion && currentAnswer
+    currentQuestion && currentAnswer?.optionId
       ? currentQuestion.options.find(
           (option) => option.id === currentAnswer.optionId,
         ) ?? null
       : null;
+
+  const selectedMainOptionIds = new Set<number>(
+    currentAnswer?.optionIds ??
+      (currentAnswer?.optionId ? [currentAnswer.optionId] : []),
+  );
 
   const groupedChildren =
     selectedOption?.issueGroups?.flatMap((group) => group.childOptions) ?? [];
@@ -166,25 +172,30 @@ export default function ExactValueModal({
         const answer = answers[question.id];
         if (!answer) return null;
 
-        const option = question.options.find(
-          (item) => item.id === answer.optionId,
+        const selectedIds = new Set<number>(
+          answer.optionIds ?? (answer.optionId ? [answer.optionId] : []),
         );
-        if (!option) return null;
+        const selectedOptions = question.options.filter((item) =>
+          selectedIds.has(item.id),
+        );
+        if (!selectedOptions.length) return null;
 
         const childLabels: string[] = [];
         const selectedChildren = new Set(answer.childOptionIds || []);
 
-        for (const group of option.issueGroups || []) {
-          for (const child of group.childOptions || []) {
-            if (selectedChildren.has(child.id)) {
-              childLabels.push(`${group.name}: ${child.label}`);
+        for (const option of selectedOptions) {
+          for (const group of option.issueGroups || []) {
+            for (const child of group.childOptions || []) {
+              if (selectedChildren.has(child.id)) {
+                childLabels.push(`${group.name}: ${child.label}`);
+              }
             }
           }
-        }
 
-        for (const child of option.childOptions || []) {
-          if (selectedChildren.has(child.id)) {
-            childLabels.push(child.label);
+          for (const child of option.childOptions || []) {
+            if (selectedChildren.has(child.id)) {
+              childLabels.push(child.label);
+            }
           }
         }
 
@@ -192,7 +203,7 @@ export default function ExactValueModal({
           itemId: question.id,
           sectionName: question.section.name,
           questionName: question.name || question.questionText,
-          answerLabel: option.label,
+          answerLabel: selectedOptions.map((option) => option.label).join(", "),
           childLabels,
         };
       })
@@ -280,11 +291,38 @@ export default function ExactValueModal({
     if (!currentQuestion) return;
 
     setError("");
+
+    if (currentQuestion.answerType === "MULTI_SELECT") {
+      setAnswers((current) => {
+        const existing = current[currentQuestion.id];
+        const currentIds = new Set<number>(
+          existing?.optionIds ?? (existing?.optionId ? [existing.optionId] : []),
+        );
+
+        if (currentIds.has(option.id)) {
+          currentIds.delete(option.id);
+        } else {
+          currentIds.add(option.id);
+        }
+
+        return {
+          ...current,
+          [currentQuestion.id]: {
+            itemId: currentQuestion.id,
+            optionIds: [...currentIds],
+            childOptionIds: [],
+          },
+        };
+      });
+      return;
+    }
+
     setAnswers((current) => ({
       ...current,
       [currentQuestion.id]: {
         itemId: currentQuestion.id,
         optionId: option.id,
+        optionIds: [option.id],
         childOptionIds: [],
       },
     }));
@@ -327,6 +365,15 @@ export default function ExactValueModal({
 
     if (!currentAnswer) {
       setError("Please select an answer.");
+      return;
+    }
+
+    if (
+      currentQuestion?.answerType === "MULTI_SELECT" &&
+      currentQuestion.isRequired &&
+      (currentAnswer.optionIds?.length ?? 0) === 0
+    ) {
+      setError("Please select at least one answer.");
       return;
     }
 
@@ -531,7 +578,7 @@ export default function ExactValueModal({
 
               <div className={styles["exact-main-options"]}>
                 {currentQuestion.options.map((option) => {
-                  const selected = currentAnswer?.optionId === option.id;
+                  const selected = selectedMainOptionIds.has(option.id);
 
                   return (
                     <button
@@ -545,7 +592,13 @@ export default function ExactValueModal({
                       {selected ? (
                         <CheckCircle2 size={20} />
                       ) : (
-                        <span className={styles["exact-radio"]} />
+                        <span
+                          className={
+                            currentQuestion.answerType === "MULTI_SELECT"
+                              ? styles["exact-checkbox"]
+                              : styles["exact-radio"]
+                          }
+                        />
                       )}
                       <strong>{option.label}</strong>
                     </button>
@@ -554,7 +607,8 @@ export default function ExactValueModal({
               </div>
 
               {currentAnswer &&
-                (!selectedOption?.showChildOptions ||
+                (currentQuestion.answerType === "MULTI_SELECT" ||
+                  !selectedOption?.showChildOptions ||
                   allChildren.length === 0) && (
                   <button
                     type="button"

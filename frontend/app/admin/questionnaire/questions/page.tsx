@@ -268,6 +268,19 @@ export default function QuestionnaireBuilderPage() {
     setAnswers(type === "YES_NO" ? [answer("Yes"), answer("No")] : [answer("")]);
   }
 
+  function addAnswer() {
+    if (answerType === "YES_NO") return;
+    setAnswers((current) => [...current, answer("")]);
+  }
+
+  function removeAnswer(index: number) {
+    if (answerType === "YES_NO") return;
+    setAnswers((current) => {
+      if (current.length <= 1) return current;
+      return current.filter((_, currentIndex) => currentIndex !== index);
+    });
+  }
+
   function updateAnswer(index: number, patch: Partial<AnswerForm>) {
     setAnswers((current) =>
       current.map((x, i) => (i === index ? { ...x, ...patch } : x)),
@@ -834,7 +847,7 @@ export default function QuestionnaireBuilderPage() {
           <div className="mt-6 space-y-5">
             {answers.map((a, ai) => (
               <div key={ai} className="rounded-3xl border bg-slate-50 p-5">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_150px_150px_190px]">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_150px_150px_190px_110px]">
                   <input
                     className="rounded-xl border bg-white px-4 py-3"
                     value={a.label}
@@ -881,6 +894,19 @@ export default function QuestionnaireBuilderPage() {
                     <option value="GLOBAL">All applicable models</option>
                     <option value="PRODUCT">Only selected model</option>
                   </select>
+
+                  {answerType !== "YES_NO" ? (
+                    <button
+                      type="button"
+                      onClick={() => removeAnswer(ai)}
+                      disabled={answers.length <= 1}
+                      className="rounded-xl border border-red-200 bg-white px-3 py-3 text-sm font-bold text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Remove
+                    </button>
+                  ) : (
+                    <div />
+                  )}
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center gap-4">
@@ -1088,6 +1114,22 @@ export default function QuestionnaireBuilderPage() {
                 )}
               </div>
             ))}
+
+            {answerType !== "YES_NO" && (
+              <div className="rounded-2xl border border-dashed bg-white p-4">
+                <button
+                  type="button"
+                  onClick={addAnswer}
+                  className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white"
+                >
+                  + Add Answer Option
+                </button>
+                <p className="mt-2 text-xs text-slate-500">
+                  Single Choice can have many answer options but the customer selects one.
+                  Multi Choice can have many answer options and the customer can select multiple.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="mt-6 flex flex-wrap gap-3">

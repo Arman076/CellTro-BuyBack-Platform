@@ -73,6 +73,33 @@ export class QuestionnaireBranchController {
   @Put('quote-policy')
   saveQuotePolicy(@Body() body: any) { return this.service.saveQuotePolicy(body); }
 
+  @Get('aggregation-policy')
+  getAggregationPolicies(@Query('productId') productId?: string) {
+    const id = productId ? Number(productId) : null;
+    if (productId && (!Number.isInteger(id) || id! <= 0)) {
+      throw new BadRequestException('Invalid productId');
+    }
+    return this.service.getAggregationPolicies(id);
+  }
+
+  @Put('aggregation-policy')
+  saveAggregationPolicy(@Body() body: any) {
+    return this.service.saveAggregationPolicy(body);
+  }
+
+  @Delete('aggregation-policy')
+  deleteAggregationPolicy(
+    @Query('level') level: string,
+    @Query('targetId', ParseIntPipe) targetId: number,
+    @Query('productId') productId?: string,
+  ) {
+    const id = productId ? Number(productId) : null;
+    if (productId && (!Number.isInteger(id) || id! <= 0)) {
+      throw new BadRequestException('Invalid productId');
+    }
+    return this.service.deleteAggregationPolicy(level, targetId, id);
+  }
+
   @Get('effective')
   getEffective(
     @Query('productId', ParseIntPipe) productId: number,

@@ -330,3 +330,12 @@
     padding: 20px 18px 24px;
   }
 }
+
+.exact-checkbox {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #cbd5e1;
+  border-radius: 6px;
+  flex: 0 0 auto;
+  background: #fff;
+}
