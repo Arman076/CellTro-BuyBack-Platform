@@ -164,11 +164,6 @@ enum QuestionnaireChildSelectionMode {
   MULTI
 }
 
-enum QuestionnaireIssueSeverity {
-  NORMAL
-  SEVERE
-}
-
 enum QuestionnaireAnswerType {
   YES_NO
   SINGLE_SELECT
@@ -270,23 +265,17 @@ model QuestionnaireOption {
   // Kept temporarily so current questionnaire code/data continues to work.
   deductionPercent Decimal @default(0) @db.Decimal(5, 2)
 
-  deductionType         QuestionnaireDeductionType    @default(PERCENTAGE)
-  deductionValue        Decimal                       @default(0) @db.Decimal(12, 2)
-  deductionTrigger      QuestionnaireDeductionTrigger @default(SELECTED)
-  // V5 option visibility / pricing policy.
-  // applicabilityTargetId is interpreted by applicabilityScope.
-  applicabilityScope    QuestionnaireRuleScope        @default(GLOBAL)
-  applicabilityTargetId Int?
-  severity              QuestionnaireIssueSeverity    @default(NORMAL)
-  agentRejectAllowed    Boolean                       @default(false)
+  deductionType    QuestionnaireDeductionType    @default(PERCENTAGE)
+  deductionValue   Decimal                       @default(0) @db.Decimal(12, 2)
+  deductionTrigger QuestionnaireDeductionTrigger @default(SELECTED)
   // Branching / sub-option configuration
-  parentOptionId        Int?
-  parentOption          QuestionnaireOption?          @relation("QuestionnaireOptionChildren", fields: [parentOptionId], references: [id], onDelete: Cascade)
-  childOptions          QuestionnaireOption[]         @relation("QuestionnaireOptionChildren")
+  parentOptionId   Int?
+  parentOption     QuestionnaireOption?          @relation("QuestionnaireOptionChildren", fields: [parentOptionId], references: [id], onDelete: Cascade)
+  childOptions     QuestionnaireOption[]         @relation("QuestionnaireOptionChildren")
   // Optional visual grouping for child issues (Physical Issues, Technical Issues, etc.)
-  issueGroupId          Int?
-  issueGroup            QuestionnaireIssueGroup?      @relation("QuestionnaireIssueGroupChildren", fields: [issueGroupId], references: [id], onDelete: SetNull)
-  issueGroups           QuestionnaireIssueGroup[]     @relation("QuestionnaireIssueGroupParent")
+  issueGroupId     Int?
+  issueGroup       QuestionnaireIssueGroup?      @relation("QuestionnaireIssueGroupChildren", fields: [issueGroupId], references: [id], onDelete: SetNull)
+  issueGroups      QuestionnaireIssueGroup[]     @relation("QuestionnaireIssueGroupParent")
 
   showChildOptions      Boolean                         @default(false)
   childPrompt           String?
@@ -311,7 +300,6 @@ model QuestionnaireOption {
 
   @@unique([itemId, value])
   @@index([parentOptionId])
-  @@index([applicabilityScope, applicabilityTargetId])
   @@index([issueGroupId])
   @@index([issueCode])
 }
@@ -601,47 +589,4 @@ model ContactLead {
   @@index([status])
   @@index([mobile])
   @@index([createdAt])
-}
-
-model QuestionnaireQuotePolicy {
-  id                    Int                         @id @default(autoincrement())
-  key                   String                      @unique
-  scope                 QuestionnaireRuleScope      @default(GLOBAL)
-  productId             Int?
-  normalMinQuotePercent Decimal                     @default(10) @db.Decimal(5, 2)
-  severeMinQuotePercent Decimal                     @default(2) @db.Decimal(5, 2)
-  normalMinQuoteType    QuestionnaireDeductionType?
-  normalMinQuoteValue   Decimal?                    @db.Decimal(12, 2)
-  severeMinQuoteType    QuestionnaireDeductionType?
-  severeMinQuoteValue   Decimal?                    @db.Decimal(12, 2)
-  isActive              Boolean                     @default(true)
-  createdAt             DateTime                    @default(now())
-  updatedAt             DateTime                    @updatedAt
-
-  @@index([scope])
-  @@index([productId])
-  @@index([isActive])
-}
-
-model QuestionnaireAggregationPolicy {
-  id Int @id @default(autoincrement())
-
-  key      String @unique
-  level    String
-  targetId Int
-
-  scope     QuestionnaireRuleScope @default(GLOBAL)
-  productId Int?
-
-  calculationMode QuestionnaireCalculationMode
-  capType         QuestionnaireDeductionType?
-  capValue        Decimal?                     @db.Decimal(12, 2)
-
-  isActive Boolean @default(true)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([level, targetId])
-  @@index([scope, productId])
 }

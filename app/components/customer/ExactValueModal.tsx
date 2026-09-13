@@ -6,9 +6,11 @@ import {
   Loader2,
   LockKeyhole,
   ShieldCheck,
+  Wrench,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+
 import styles from "./ExactValueModal.module.css";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
@@ -18,6 +20,13 @@ type ChildOption = {
   label: string;
   value: string;
   issueCode?: string | null;
+};
+
+type IssueGroup = {
+  id: number;
+  name: string;
+  displayOrder: number;
+  childOptions: ChildOption[];
 };
 
 type MainOption = {
@@ -32,6 +41,7 @@ type MainOption = {
   maxChildSelections?: number | null;
   childSelectionMode: "SINGLE" | "MULTI";
   childOptions: ChildOption[];
+  issueGroups: IssueGroup[];
 };
 
 type EffectiveQuestion = {
@@ -114,10 +124,14 @@ export default function ExactValueModal({
   variantLabel,
   basePrice,
 }: Props) {
-  const [questionnaire, setQuestionnaire] = useState<EffectiveResponse | null>(null);
+  const [questionnaire, setQuestionnaire] =
+    useState<EffectiveResponse | null>(null);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, Answer>>({});
-  const [step, setStep] = useState<"QUESTIONS" | "PHONE" | "OTP" | "RESULT">("QUESTIONS");
+  const [step, setStep] =
+    useState<"QUESTIONS" | "ISSUES" | "SUMMARY" | "PHONE" | "OTP" | "RESULT">(
+      "QUESTIONS",
+    );
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -132,27 +146,97 @@ export default function ExactValueModal({
 
   const selectedOption =
     currentQuestion && currentAnswer
-      ? currentQuestion.options.find((option) => option.id === currentAnswer.optionId) ?? null
+      ? currentQuestion.options.find(
+          (option) => option.id === currentAnswer.optionId,
+        ) ?? null
       : null;
+
+  const groupedChildren =
+    selectedOption?.issueGroups?.flatMap((group) => group.childOptions) ?? [];
+  const flatChildren = selectedOption?.childOptions ?? [];
+  const allChildren = [...groupedChildren, ...flatChildren];
 
   const progress = questions.length
     ? Math.round(((questionIndex + 1) / questions.length) * 100)
     : 0;
 
-  const canContinue = useMemo(() => {
-    if (!currentQuestion || !currentAnswer) return false;
+  const summaryRows = useMemo(() => {
+    return questions
+      .map((question) => {
+        const answer = answers[question.id];
+        if (!answer) return null;
+
+        const option = question.options.find(
+          (item) => item.id === answer.optionId,
+        );
+        if (!option) return null;
+
+        const childLabels: string[] = [];
+        const selectedChildren = new Set(answer.childOptionIds || []);
+
+        for (const group of option.issueGroups || []) {
+          for (const child of group.childOptions || []) {
+            if (selectedChildren.has(child.id)) {
+              childLabels.push(`${group.name}: ${child.label}`);
+            }
+          }
+        }
+
+        for (const child of option.childOptions || []) {
+          if (selectedChildren.has(child.id)) {
+            childLabels.push(child.label);
+          }
+        }
+
+        return {
+          itemId: question.id,
+          sectionName: question.section.name,
+          questionName: question.name || question.questionText,
+          answerLabel: option.label,
+          childLabels,
+        };
+      })
+      .filter(Boolean) as Array<{
+      itemId: number;
+      sectionName: string;
+      questionName: string;
+      answerLabel: string;
+      childLabels: string[];
+    }>;
+  }, [questions, answers]);
+
+  const summaryBySection = useMemo(() => {
+    const grouped = new Map<
+      string,
+      Array<(typeof summaryRows)[number]>
+    >();
+
+    for (const row of summaryRows) {
+      const current = grouped.get(row.sectionName) || [];
+      current.push(row);
+      grouped.set(row.sectionName, current);
+    }
+
+    return [...grouped.entries()];
+  }, [summaryRows]);
+
+  const childSelectionValid = useMemo(() => {
     if (!selectedOption?.showChildOptions) return true;
 
-    const count = currentAnswer.childOptionIds.length;
+    const count = currentAnswer?.childOptionIds.length ?? 0;
     const minimum = selectedOption.requireChildSelection
       ? Math.max(1, selectedOption.minChildSelections || 1)
       : selectedOption.minChildSelections || 0;
 
     if (count < minimum) return false;
-    if (selectedOption.maxChildSelections && count > selectedOption.maxChildSelections) return false;
-
+    if (
+      selectedOption.maxChildSelections &&
+      count > selectedOption.maxChildSelections
+    ) {
+      return false;
+    }
     return true;
-  }, [currentQuestion, currentAnswer, selectedOption]);
+  }, [selectedOption, currentAnswer]);
 
   useEffect(() => {
     if (!open) return;
@@ -161,7 +245,9 @@ export default function ExactValueModal({
     setError("");
     setLoading(true);
 
-    apiJson(`${API}/questionnaire/effective?productId=${productId}&audience=CUSTOMER`)
+    apiJson(
+      `${API}/questionnaire/effective?productId=${productId}&variantId=${variantId}&audience=CUSTOMER`,
+    )
       .then((data: EffectiveResponse) => {
         setQuestionnaire(data);
         setQuestionIndex(0);
@@ -174,7 +260,9 @@ export default function ExactValueModal({
         setDevOtp(null);
       })
       .catch((e) =>
-        setError(e instanceof Error ? e.message : "Unable to load questionnaire"),
+        setError(
+          e instanceof Error ? e.message : "Unable to load questionnaire",
+        ),
       )
       .finally(() => setLoading(false));
 
@@ -190,8 +278,8 @@ export default function ExactValueModal({
 
   function selectMainOption(option: MainOption) {
     if (!currentQuestion) return;
-    setError("");
 
+    setError("");
     setAnswers((current) => ({
       ...current,
       [currentQuestion.id]: {
@@ -200,20 +288,30 @@ export default function ExactValueModal({
         childOptionIds: [],
       },
     }));
+
+    const hasDetails =
+      option.showChildOptions &&
+      ((option.issueGroups?.some((g) => g.childOptions.length > 0) ?? false) ||
+        option.childOptions.length > 0);
+
+    if (hasDetails) {
+      setStep("ISSUES");
+    }
   }
 
   function toggleChild(childId: number) {
     if (!currentQuestion || !currentAnswer || !selectedOption) return;
 
     const currentIds = currentAnswer.childOptionIds;
-    const nextIds =
-      selectedOption.childSelectionMode === "SINGLE"
-        ? currentIds.includes(childId)
-          ? []
-          : [childId]
-        : currentIds.includes(childId)
-          ? currentIds.filter((id) => id !== childId)
-          : [...currentIds, childId];
+    let nextIds: number[];
+
+    if (selectedOption.childSelectionMode === "SINGLE") {
+      nextIds = currentIds.includes(childId) ? [] : [childId];
+    } else {
+      nextIds = currentIds.includes(childId)
+        ? currentIds.filter((id) => id !== childId)
+        : [...currentIds, childId];
+    }
 
     setAnswers((current) => ({
       ...current,
@@ -224,33 +322,61 @@ export default function ExactValueModal({
     }));
   }
 
-  function continueQuestion() {
+  function advanceQuestion() {
     setError("");
 
-    if (!canContinue) {
-      setError("Please complete this question before continuing.");
+    if (!currentAnswer) {
+      setError("Please select an answer.");
+      return;
+    }
+
+    if (selectedOption?.showChildOptions && !childSelectionValid) {
+      setStep("ISSUES");
+      setError("Please select the required issue before proceeding.");
       return;
     }
 
     if (questionIndex < questions.length - 1) {
       setQuestionIndex((current) => current + 1);
+      setStep("QUESTIONS");
       return;
     }
 
-    setStep("PHONE");
+    setStep("SUMMARY");
+  }
+
+  function proceedIssues() {
+    if (!childSelectionValid) {
+      setError("Please select at least one applicable issue.");
+      return;
+    }
+
+    advanceQuestion();
   }
 
   function goBack() {
     setError("");
 
+    if (step === "ISSUES") {
+      setStep("QUESTIONS");
+      return;
+    }
+
     if (step === "QUESTIONS") {
-      if (questionIndex > 0) setQuestionIndex((current) => current - 1);
+      if (questionIndex > 0) {
+        setQuestionIndex((current) => current - 1);
+      }
+      return;
+    }
+
+    if (step === "SUMMARY") {
+      setStep("QUESTIONS");
+      setQuestionIndex(Math.max(0, questions.length - 1));
       return;
     }
 
     if (step === "PHONE") {
-      setStep("QUESTIONS");
-      setQuestionIndex(Math.max(0, questions.length - 1));
+      setStep("SUMMARY");
       return;
     }
 
@@ -303,10 +429,13 @@ export default function ExactValueModal({
     try {
       setLoading(true);
 
-      const response = await apiJson(`${API}/questionnaire/quote/verify-otp`, {
-        method: "POST",
-        body: JSON.stringify({ sessionId, otp }),
-      });
+      const response = await apiJson(
+        `${API}/questionnaire/quote/verify-otp`,
+        {
+          method: "POST",
+          body: JSON.stringify({ sessionId, otp }),
+        },
+      );
 
       setQuote({
         basePrice: Number(response.basePrice),
@@ -329,6 +458,7 @@ export default function ExactValueModal({
       className={styles["exact-modal-backdrop"]}
       role="dialog"
       aria-modal="true"
+      aria-label="Get exact device value"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) closeModal();
       }}
@@ -340,6 +470,7 @@ export default function ExactValueModal({
             className={styles["exact-icon-btn"]}
             onClick={goBack}
             disabled={step === "QUESTIONS" && questionIndex === 0}
+            aria-label="Back"
           >
             <ArrowLeft size={19} />
           </button>
@@ -357,26 +488,33 @@ export default function ExactValueModal({
             </div>
           </div>
 
-          <button type="button" className={styles["exact-icon-btn"]} onClick={closeModal}>
+          <button
+            type="button"
+            className={styles["exact-icon-btn"]}
+            onClick={closeModal}
+            aria-label="Close"
+          >
             <X size={20} />
           </button>
         </div>
 
         {loading && !questionnaire && (
           <div className={styles["exact-loading"]}>
-            <Loader2 className={styles["spin"]} size={28} />
-            <span>Loading your device questions...</span>
+            <Loader2 className={styles.spin} size={28} />
+            <span>Loading device questions...</span>
           </div>
         )}
 
         {error && <div className={styles["exact-error"]}>{error}</div>}
 
-        {questionnaire && step === "QUESTIONS" && (
+        {questionnaire && step === "QUESTIONS" && currentQuestion && (
           <>
             <div className={styles["exact-progress-wrap"]}>
               <div className={styles["exact-progress-meta"]}>
-                <span>Device Condition</span>
-                <strong>{questionIndex + 1} / {questions.length}</strong>
+                <span>{currentQuestion.section.name}</span>
+                <strong>
+                  {questionIndex + 1} / {questions.length}
+                </strong>
               </div>
 
               <div className={styles["exact-progress-track"]}>
@@ -384,84 +522,189 @@ export default function ExactValueModal({
               </div>
             </div>
 
-            {currentQuestion ? (
-              <div className={styles["exact-question-body"]}>
-                <span className={styles["exact-section-name"]}>
-                  {currentQuestion.section.name}
-                </span>
+            <div className={styles["exact-question-body"]}>
+              <span className={styles["exact-section-name"]}>
+                {currentQuestion.section.name}
+              </span>
 
-                <h2>{currentQuestion.questionText}</h2>
+              <h2>{currentQuestion.questionText}</h2>
 
-                <div className={styles["exact-main-options"]}>
-                  {currentQuestion.options.map((option) => {
-                    const selected = currentAnswer?.optionId === option.id;
+              <div className={styles["exact-main-options"]}>
+                {currentQuestion.options.map((option) => {
+                  const selected = currentAnswer?.optionId === option.id;
 
-                    return (
-                      <button
-                        key={option.id}
-                        type="button"
-                        className={`${styles["exact-main-option"]} ${selected ? styles.active : ""}`}
-                        onClick={() => selectMainOption(option)}
-                      >
-                        {selected ? <CheckCircle2 size={20} /> : <span className={styles["exact-radio"]} />}
-                        <strong>{option.label}</strong>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {selectedOption?.showChildOptions &&
-                  selectedOption.childOptions.length > 0 && (
-                    <div className={styles["exact-child-panel"]}>
-                      <h3>{selectedOption.childPrompt || "Please select"}</h3>
-
-                      {selectedOption.requireChildSelection && (
-                        <p>
-                          Select at least{" "}
-                          {Math.max(1, selectedOption.minChildSelections || 1)}
-                        </p>
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`${styles["exact-main-option"]} ${
+                        selected ? styles.active : ""
+                      }`}
+                      onClick={() => selectMainOption(option)}
+                    >
+                      {selected ? (
+                        <CheckCircle2 size={20} />
+                      ) : (
+                        <span className={styles["exact-radio"]} />
                       )}
-
-                      <div className={styles["exact-child-grid"]}>
-                        {selectedOption.childOptions.map((child) => {
-                          const checked =
-                            currentAnswer?.childOptionIds.includes(child.id) ?? false;
-
-                          return (
-                            <button
-                              key={child.id}
-                              type="button"
-                              className={`${styles["exact-child-option"]} ${checked ? styles.active : ""}`}
-                              onClick={() => toggleChild(child.id)}
-                            >
-                              <span className={styles["exact-checkbox"]}>
-                                {checked ? "✓" : ""}
-                              </span>
-                              <span>{child.label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                <button
-                  type="button"
-                  className={styles["exact-primary"]}
-                  onClick={continueQuestion}
-                  disabled={!canContinue}
-                >
-                  {questionIndex === questions.length - 1
-                    ? "Continue"
-                    : "Next Question"}
-                </button>
+                      <strong>{option.label}</strong>
+                    </button>
+                  );
+                })}
               </div>
-            ) : (
-              <div className={styles["exact-loading"]}>
-                No active customer questions configured.
-              </div>
-            )}
+
+              {currentAnswer &&
+                (!selectedOption?.showChildOptions ||
+                  allChildren.length === 0) && (
+                  <button
+                    type="button"
+                    className={styles["exact-primary"]}
+                    onClick={advanceQuestion}
+                  >
+                    {questionIndex === questions.length - 1
+                      ? "Continue"
+                      : "Next Question"}
+                  </button>
+                )}
+            </div>
           </>
+        )}
+
+        {questionnaire && step === "ISSUES" && currentQuestion && selectedOption && (
+          <div className={styles["issue-screen"]}>
+            <div className={styles["issue-heading"]}>
+              <span className={styles["issue-kicker"]}>
+                {currentQuestion.section.name}
+              </span>
+              <h2>{selectedOption.childPrompt || "Select Issues"}</h2>
+              <p>Choose all issues that apply to your device.</p>
+            </div>
+
+            <div className={styles["issue-scroll"]}>
+              {selectedOption.issueGroups.map((group) => (
+                <section key={group.id} className={styles["issue-group"]}>
+                  <h3>{group.name}</h3>
+
+                  <div className={styles["issue-grid"]}>
+                    {group.childOptions.map((child) => {
+                      const checked =
+                        currentAnswer?.childOptionIds.includes(child.id) ?? false;
+
+                      return (
+                        <button
+                          key={child.id}
+                          type="button"
+                          className={`${styles["issue-card"]} ${
+                            checked ? styles["issue-card-active"] : ""
+                          }`}
+                          onClick={() => toggleChild(child.id)}
+                        >
+                          <span className={styles["issue-check"]}>
+                            {checked ? "✓" : ""}
+                          </span>
+                          <span className={styles["issue-icon"]}>
+                            <Wrench size={30} strokeWidth={1.5} />
+                          </span>
+                          <strong>{child.label}</strong>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+
+              {selectedOption.childOptions.length > 0 && (
+                <section className={styles["issue-group"]}>
+                  <h3>{selectedOption.childPrompt || "Issues"}</h3>
+                  <div className={styles["issue-grid"]}>
+                    {selectedOption.childOptions.map((child) => {
+                      const checked =
+                        currentAnswer?.childOptionIds.includes(child.id) ?? false;
+
+                      return (
+                        <button
+                          key={child.id}
+                          type="button"
+                          className={`${styles["issue-card"]} ${
+                            checked ? styles["issue-card-active"] : ""
+                          }`}
+                          onClick={() => toggleChild(child.id)}
+                        >
+                          <span className={styles["issue-check"]}>
+                            {checked ? "✓" : ""}
+                          </span>
+                          <span className={styles["issue-icon"]}>
+                            <Wrench size={30} strokeWidth={1.5} />
+                          </span>
+                          <strong>{child.label}</strong>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+            </div>
+
+            <div className={styles["issue-footer"]}>
+              <button
+                type="button"
+                className={styles["exact-primary"]}
+                onClick={proceedIssues}
+                disabled={!childSelectionValid}
+              >
+                Proceed
+              </button>
+            </div>
+          </div>
+        )}
+
+        {questionnaire && step === "SUMMARY" && (
+          <div className={styles["summary-body"]}>
+            <div className={styles["summary-kicker"]}>DEVICE EVALUATION</div>
+            <h2>Review your answers</h2>
+            <p className={styles["summary-intro"]}>
+              Please confirm the device condition before mobile verification.
+            </p>
+
+            <div className={styles["summary-card"]}>
+              {summaryBySection.map(([sectionName, rows]) => (
+                <section key={sectionName} className={styles["summary-section"]}>
+                  <h3>{sectionName}</h3>
+                  <div className={styles["summary-list"]}>
+                    {rows.map((row) => (
+                      <div key={row.itemId} className={styles["summary-row"]}>
+                        <span className={styles["summary-dot"]}>•</span>
+                        <div>
+                          <strong>{row.questionName}:</strong>{" "}
+                          <span>{row.answerLabel}</span>
+                          {row.childLabels.length > 0 && (
+                            <ul className={styles["summary-children"]}>
+                              {row.childLabels.map((label) => (
+                                <li key={label}>{label}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+
+            <div className={styles["summary-price"]}>
+              <span>Selected Variant Base Price</span>
+              <strong>{formatPrice(basePrice)}</strong>
+            </div>
+
+            <button
+              type="button"
+              className={styles["exact-primary"]}
+              onClick={() => setStep("PHONE")}
+            >
+              Confirm & Continue
+            </button>
+          </div>
         )}
 
         {questionnaire && step === "PHONE" && (
@@ -469,11 +712,8 @@ export default function ExactValueModal({
             <div className={styles["exact-lock-circle"]}>
               <LockKeyhole size={24} />
             </div>
-
             <h2>Unlock your exact price</h2>
-            <p>
-              Verify your mobile number to view the final device value.
-            </p>
+            <p>Verify your mobile number to view the final device value.</p>
 
             <label className={styles["exact-label"]}>Mobile Number *</label>
 
@@ -499,14 +739,7 @@ export default function ExactValueModal({
               onClick={sendOtp}
               disabled={loading}
             >
-              {loading ? (
-                <>
-                  <Loader2 size={18} className={styles["spin"]} />
-                  Sending...
-                </>
-              ) : (
-                "Send OTP"
-              )}
+              {loading ? "Sending..." : "Send OTP"}
             </button>
 
             <div className={styles["exact-secure-note"]}>
@@ -521,7 +754,6 @@ export default function ExactValueModal({
             <div className={styles["exact-lock-circle"]}>
               <LockKeyhole size={24} />
             </div>
-
             <h2>Verify OTP</h2>
             <p>
               Enter the 6-digit OTP sent to +91 {phone.slice(0, 2)}
@@ -555,15 +787,6 @@ export default function ExactValueModal({
             >
               {loading ? "Verifying..." : "Verify OTP"}
             </button>
-
-            <button
-              type="button"
-              className={styles["exact-secondary-link"]}
-              onClick={sendOtp}
-              disabled={loading}
-            >
-              Resend OTP
-            </button>
           </div>
         )}
 
@@ -572,7 +795,6 @@ export default function ExactValueModal({
             <div className={styles["exact-success-icon"]}>
               <CheckCircle2 size={32} />
             </div>
-
             <span className={styles["exact-result-label"]}>Your Exact Value</span>
             <strong className={styles["exact-final-price"]}>
               {formatPrice(quote.finalPrice)}
@@ -583,25 +805,34 @@ export default function ExactValueModal({
                 <span>Base Value</span>
                 <strong>{formatPrice(quote.basePrice)}</strong>
               </div>
-
               <div>
                 <span>Condition Adjustment</span>
                 <strong>-{formatPrice(quote.totalDeduction)}</strong>
               </div>
-
-              <div className={styles["final"]}>
+              <div className={styles.final}>
                 <span>Final Value</span>
                 <strong>{formatPrice(quote.finalPrice)}</strong>
               </div>
             </div>
 
+            <details className={styles["result-summary"]}>
+              <summary>View condition summary</summary>
+              <div className={styles["result-summary-content"]}>
+                {summaryRows.map((row) => (
+                  <div key={row.itemId}>
+                    <strong>{row.questionName}</strong>
+                    <span>{row.answerLabel}</span>
+                    {row.childLabels.length > 0 && (
+                      <small>{row.childLabels.join(", ")}</small>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+
             <button type="button" className={styles["exact-primary"]}>
               Continue to Pickup
             </button>
-
-            <p className={styles["exact-result-note"]}>
-              Final pickup value may be revalidated during physical inspection.
-            </p>
           </div>
         )}
       </div>
