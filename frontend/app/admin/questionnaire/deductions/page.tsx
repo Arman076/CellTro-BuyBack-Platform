@@ -492,6 +492,24 @@ export default function DeductionPage() {
                 Overview
               </a>
               <a
+                href="/admin/questionnaire/model-overrides"
+                className="rounded-xl border border-indigo-400 px-4 py-2.5 text-sm font-bold text-indigo-100"
+              >
+                Model Overrides
+              </a>
+              <a
+                href="/admin/questionnaire/calculation-rules"
+                className="rounded-xl border border-indigo-400 px-4 py-2.5 text-sm font-bold text-indigo-100"
+              >
+                Calculation Rules
+              </a>
+              <a
+                href="/admin/questionnaire/capabilities"
+                className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-bold"
+              >
+                Capabilities
+              </a>
+              <a
                 href="/admin/questionnaire/questions"
                 className="rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-950"
               >

@@ -121,10 +121,22 @@ export default function QuestionnaireOverviewPage() {
                 + Manage Questions
               </a>
               <a
-                href="/admin/questionnaire/deduction"
+                href="/admin/questionnaire/deductions"
+                className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-bold"
+              >
+                Deduction Rules
+              </a>
+              <a
+                href="/admin/questionnaire/model-overrides"
                 className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-bold"
               >
                 Model Overrides
+              </a>
+              <a
+                href="/admin/questionnaire/calculation-rules"
+                className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-bold"
+              >
+                Calculation Rules
               </a>
               <a
                 href="/admin/questionnaire/capabilities"
