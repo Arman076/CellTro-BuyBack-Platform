@@ -18,6 +18,7 @@ import { SiteSettingsModule } from './site-settings/site-settings.module.js';
 import { TermsSectionsModule } from './terms-sections/terms-sections.module.js';
 import { PartnerLeadsModule } from './partner-leads/partner-leads.module.js';
 import { ContactLeadsModule } from './contact-leads/contact-leads.module.js';
+import { OrdersModule } from "./orders/orders.module.js";
 @Module({
   imports: [
     PrismaModule,
@@ -35,6 +36,7 @@ import { ContactLeadsModule } from './contact-leads/contact-leads.module.js';
     TermsSectionsModule,
     PartnerLeadsModule,
     ContactLeadsModule,
+    OrdersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

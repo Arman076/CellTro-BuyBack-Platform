@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import styles from "./ExactValueModal.module.css";
 
@@ -125,6 +126,7 @@ export default function ExactValueModal({
   variantLabel,
   basePrice,
 }: Props) {
+  const router = useRouter();
   const [questionnaire, setQuestionnaire] =
     useState<EffectiveResponse | null>(null);
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -496,6 +498,35 @@ export default function ExactValueModal({
     } finally {
       setLoading(false);
     }
+  }
+
+  function continueToPickup() {
+    if (!quote) {
+      setError("Unable to continue. Please calculate the final value again.");
+      return;
+    }
+
+    const normalizedPhone = phone.replace(/\D/g, "");
+
+    // Keep the already verified customer + quote available for the pickup flow.
+    // No second OTP is required on the address page.
+    sessionStorage.setItem("verifiedCustomerPhone", normalizedPhone);
+    sessionStorage.setItem(
+      "sellQuote",
+      JSON.stringify({
+        productId,
+        productName,
+        productImage,
+        variantId,
+        variantLabel,
+        basePrice: quote.basePrice,
+        totalDeduction: quote.totalDeduction,
+        finalPrice: quote.finalPrice,
+      }),
+    );
+
+    document.body.style.overflow = "";
+    router.push("/sell/pickup");
   }
 
   if (!open) return null;
@@ -884,7 +915,11 @@ export default function ExactValueModal({
               </div>
             </details>
 
-            <button type="button" className={styles["exact-primary"]}>
+            <button
+              type="button"
+              className={styles["exact-primary"]}
+              onClick={continueToPickup}
+            >
               Continue to Pickup
             </button>
           </div>

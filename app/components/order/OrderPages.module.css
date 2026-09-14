@@ -1,0 +1,413 @@
+.page {
+  min-height: 100vh;
+  background: #f7f9fb;
+  padding: 30px 16px 72px;
+  color: #17212b;
+}
+
+.container {
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.centerHeader {
+  text-align: center;
+  margin-bottom: 22px;
+}
+
+.successIcon {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 14px;
+  place-items: center;
+  border-radius: 50%;
+  background: #e6f7f4;
+  color: #087f73;
+  font-size: 30px;
+  font-weight: 900;
+}
+
+.centerHeader h1 {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 38px);
+}
+
+.centerHeader p {
+  margin: 8px 0 0;
+  color: #667085;
+}
+
+.card {
+  border: 1px solid #e4e7ec;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 5px 22px rgba(16, 24, 40, 0.04);
+  padding: 20px;
+}
+
+.card + .card {
+  margin-top: 14px;
+}
+
+.banner {
+  margin-bottom: 14px;
+  border: 1px solid #f9dbaf;
+  border-radius: 12px;
+  background: #fff7ed;
+  padding: 12px 14px;
+  color: #8a4b08;
+  font-size: 12px;
+}
+
+.orderHero {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+}
+
+.deviceImage {
+  display: grid;
+  width: 84px;
+  height: 84px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #f2f4f7;
+  color: #667085;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.deviceImage img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.orderHero h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.orderHero p {
+  margin: 5px 0 0;
+  color: #667085;
+  font-size: 12px;
+}
+
+.price {
+  color: #087f73;
+  font-size: 26px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.rows {
+  margin-top: 12px;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  border-top: 1px solid #eaecf0;
+  padding: 12px 0 0;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.row span {
+  color: #667085;
+}
+
+.row strong {
+  max-width: 62%;
+  text-align: right;
+}
+
+.primaryButton,
+.secondaryButton,
+.dangerButton {
+  min-height: 44px;
+  border-radius: 10px;
+  padding: 0 18px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.primaryButton {
+  border: 0;
+  background: #18a999;
+  color: #ffffff;
+}
+
+.secondaryButton {
+  border: 1px solid #d0d5dd;
+  background: #ffffff;
+  color: #344054;
+}
+
+.dangerButton {
+  border: 1px solid #fda29b;
+  background: #ffffff;
+  color: #d92d20;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.timeline {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0;
+  margin: 18px 0 8px;
+}
+
+.timelineItem {
+  position: relative;
+  text-align: center;
+}
+
+.timelineItem::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  left: -50%;
+  width: 100%;
+  height: 2px;
+  background: #e4e7ec;
+  z-index: 0;
+}
+
+.timelineItem:first-child::before {
+  display: none;
+}
+
+.timelineDot {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  margin: 0 auto 8px;
+  place-items: center;
+  border-radius: 50%;
+  background: #e4e7ec;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.timelineItemActive .timelineDot {
+  background: #18a999;
+}
+
+.timelineItemActive::before {
+  background: #18a999;
+}
+
+.timelineItem strong {
+  display: block;
+  font-size: 10px;
+}
+
+.timelineItem span {
+  display: block;
+  margin-top: 3px;
+  color: #98a2b3;
+  font-size: 9px;
+}
+
+.twoCol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.detailBox {
+  border-radius: 12px;
+  background: #f9fafb;
+  padding: 14px;
+}
+
+.detailBox span,
+.detailBox strong {
+  display: block;
+}
+
+.detailBox span {
+  margin-bottom: 6px;
+  color: #667085;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.detailBox strong {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.historyList {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.historyItem {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.historyDot {
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: #18a999;
+}
+
+.historyItem strong,
+.historyItem span {
+  display: block;
+}
+
+.historyItem strong {
+  font-size: 12px;
+}
+
+.historyItem span {
+  margin-top: 3px;
+  color: #667085;
+  font-size: 10px;
+}
+
+.historyItem time {
+  color: #98a2b3;
+  font-size: 10px;
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(16, 24, 40, 0.45);
+  padding: 16px;
+}
+
+.modal {
+  width: min(100%, 520px);
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 20px;
+  box-shadow: 0 24px 64px rgba(16, 24, 40, 0.24);
+}
+
+.modal h3 {
+  margin: 0;
+}
+
+.modal p {
+  color: #667085;
+  font-size: 12px;
+}
+
+.field {
+  margin-top: 14px;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.field select,
+.field input {
+  width: 100%;
+  height: 44px;
+  box-sizing: border-box;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0 12px;
+}
+
+.error {
+  margin-bottom: 14px;
+  border-radius: 10px;
+  background: #fffbfa;
+  padding: 11px;
+  color: #b42318;
+  font-size: 12px;
+}
+
+.loading {
+  min-height: 60vh;
+  display: grid;
+  place-items: center;
+  color: #667085;
+}
+
+@media (max-width: 760px) {
+  .orderHero {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .price {
+    grid-column: 1 / -1;
+  }
+
+  .twoCol {
+    grid-template-columns: 1fr;
+  }
+
+  .timeline {
+    overflow-x: auto;
+    grid-template-columns: repeat(6, minmax(110px, 1fr));
+    padding-bottom: 8px;
+  }
+}
+
+@media (max-width: 520px) {
+  .page {
+    padding: 20px 12px 56px;
+  }
+
+  .card {
+    padding: 16px;
+  }
+
+  .row {
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .row strong {
+    max-width: none;
+    text-align: left;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+
+  .primaryButton,
+  .secondaryButton,
+  .dangerButton {
+    width: 100%;
+  }
+}
