@@ -22,8 +22,7 @@ model Category {
 
   questionnaireItems          QuestionnaireItem[]
   questionnaireDeductionRules QuestionnaireDeductionRule[]
-
-  createdAt DateTime @default(now())
+createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
@@ -40,8 +39,7 @@ model Brand {
   series     ProductSeries[]
 
   questionnaireDeductionRules QuestionnaireDeductionRule[]
-
-  createdAt DateTime @default(now())
+createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
@@ -81,11 +79,8 @@ model Product {
 
   questionnaireMappings       QuestionnaireItemProduct[]
   questionnaireDeductionRules QuestionnaireDeductionRule[]
-  capabilities                ProductCapability[]
-
-  enquiries EnquirySession[]
-
-  createdAt DateTime @default(now())
+capabilities                ProductCapability[]
+createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([categoryId, brandId, slug])
@@ -104,9 +99,7 @@ model ProductVariant {
   values VariantAttributeValue[]
 
   questionnaireDeductionRules QuestionnaireDeductionRule[]
-
-  enquiries EnquirySession[]
-
+enquiries                      EnquirySession[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -277,23 +270,20 @@ model QuestionnaireOption {
   deductionType         QuestionnaireDeductionType    @default(PERCENTAGE)
   deductionValue        Decimal                       @default(0) @db.Decimal(12, 2)
   deductionTrigger      QuestionnaireDeductionTrigger @default(SELECTED)
-
   // V5 option visibility / pricing policy.
   // applicabilityTargetId is interpreted by applicabilityScope.
-  applicabilityScope    QuestionnaireRuleScope     @default(GLOBAL)
+  applicabilityScope    QuestionnaireRuleScope        @default(GLOBAL)
   applicabilityTargetId Int?
-  severity              QuestionnaireIssueSeverity @default(NORMAL)
-  agentRejectAllowed    Boolean                    @default(false)
-
+  severity              QuestionnaireIssueSeverity    @default(NORMAL)
+  agentRejectAllowed    Boolean                       @default(false)
   // Branching / sub-option configuration
-  parentOption   QuestionnaireOption? @relation("QuestionnaireOptionChildren", fields: [parentOptionId], references: [id], onDelete: Cascade)
-  parentOptionId Int?
-  childOptions   QuestionnaireOption[] @relation("QuestionnaireOptionChildren")
-
-  // Optional visual grouping for child issues
-  issueGroupId Int?
-  issueGroup   QuestionnaireIssueGroup?  @relation("QuestionnaireIssueGroupChildren", fields: [issueGroupId], references: [id], onDelete: SetNull)
-  issueGroups  QuestionnaireIssueGroup[] @relation("QuestionnaireIssueGroupParent")
+  parentOptionId        Int?
+  parentOption          QuestionnaireOption?          @relation("QuestionnaireOptionChildren", fields: [parentOptionId], references: [id], onDelete: Cascade)
+  childOptions          QuestionnaireOption[]         @relation("QuestionnaireOptionChildren")
+  // Optional visual grouping for child issues (Physical Issues, Technical Issues, etc.)
+  issueGroupId          Int?
+  issueGroup            QuestionnaireIssueGroup?      @relation("QuestionnaireIssueGroupChildren", fields: [issueGroupId], references: [id], onDelete: SetNull)
+  issueGroups           QuestionnaireIssueGroup[]     @relation("QuestionnaireIssueGroupParent")
 
   showChildOptions      Boolean                         @default(false)
   childPrompt           String?
@@ -490,8 +480,7 @@ model ProductSeries {
   products Product[]
 
   questionnaireDeductionRules QuestionnaireDeductionRule[]
-
-  createdAt DateTime @default(now())
+createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([categoryId, brandId, slug])
@@ -554,11 +543,11 @@ enum PartnerLeadStatus {
 model PartnerLead {
   id Int @id @default(autoincrement())
 
-  fullName      String
-  businessName  String?
-  mobile        String
-  email         String?
-  partnerType   PartnerType
+  fullName     String
+  businessName String?
+  mobile       String
+  email        String?
+  partnerType  PartnerType
 
   city            String
   pincode         String
@@ -642,7 +631,7 @@ model QuestionnaireAggregationPolicy {
 
   calculationMode QuestionnaireCalculationMode
   capType         QuestionnaireDeductionType?
-  capValue        Decimal? @db.Decimal(12, 2)
+  capValue        Decimal?                     @db.Decimal(12, 2)
 
   isActive Boolean @default(true)
 
@@ -750,12 +739,8 @@ model SellOrder {
   addressSnapshot       OrderAddressSnapshot?
   statusHistory         OrderStatusHistory[]
   reschedules           OrderRescheduleHistory[]
-
-  enquiry      EnquirySession?
-  cancellation OrderCancellation?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
 
   @@index([customerId])
   @@index([orderNumber])
@@ -810,91 +795,4 @@ model OrderRescheduleHistory {
   createdAt     DateTime  @default(now())
 
   @@index([orderId, createdAt])
-}
-
-// ============================================================
-// ENQUIRY / FUNNEL / CANCELLATION TRACKING
-// ============================================================
-
-enum CancellationActor {
-  CUSTOMER
-  AGENT
-  VENDOR
-  ADMIN
-  SYSTEM
-}
-
-model EnquirySession {
-  id        String @id @default(cuid())
-  sessionId String @unique
-  phone     String
-
-  productId Int?
-  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
-  identityVerifiedAt DateTime?
-
-  variantId Int?
-  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
-
-  questionnaireCompletedAt DateTime?
-  otpSentAt                 DateTime?
-  otpVerifiedAt             DateTime?
-  quoteViewedAt             DateTime?
-
-  quoteAmount Decimal? @db.Decimal(12, 2)
-
-  orderId String? @unique
-  order   SellOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  verifiedSessionId String?
-  verifiedSession   CustomerVerifiedSession? @relation(fields: [verifiedSessionId], references: [id], onDelete: SetNull)
-
-  questionnaireSnapshot Json?
-
-  @@index([phone])
-  @@index([questionnaireCompletedAt])
-  @@index([otpVerifiedAt])
-  @@index([quoteViewedAt, orderId])
-  @@index([createdAt])
-  @@index([verifiedSessionId, quoteViewedAt])
-  @@index([identityVerifiedAt])
-}
-
-model OrderCancellation {
-  id      Int    @id @default(autoincrement())
-  orderId String @unique
-
-  order SellOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
-  actor CancellationActor
-
-  reasonCode String?
-  reasonText String?
-
-  createdAt DateTime @default(now())
-
-  @@index([createdAt])
-  @@index([actor, createdAt])
-}
-
-
-model CustomerVerifiedSession {
-  id        String   @id @default(cuid())
-  tokenHash String   @unique
-  phone     String
-
-  verifiedAt DateTime @default(now())
-  expiresAt  DateTime
-  revokedAt  DateTime?
-
-  enquiries EnquirySession[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([phone, expiresAt])
-  @@index([expiresAt, revokedAt])
 }

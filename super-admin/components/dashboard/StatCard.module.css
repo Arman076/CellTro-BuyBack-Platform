@@ -1,0 +1,265 @@
+.card {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+
+  padding: 20px;
+
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 18px;
+
+  background: #ffffff;
+
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.03),
+    0 8px 24px rgba(15, 23, 42, 0.035);
+
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease;
+}
+
+.card::before {
+  content: "";
+
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+
+  height: 3px;
+
+  background: var(--accent);
+}
+
+.card:hover {
+  transform: translateY(-3px);
+
+  border-color: color-mix(
+    in srgb,
+    var(--accent) 28%,
+    #e2e8f0
+  );
+
+  box-shadow:
+    0 12px 32px rgba(15, 23, 42, 0.09);
+}
+
+.card_blue {
+  --accent: #2563eb;
+  background:
+    linear-gradient(
+      145deg,
+      #eff6ff 0%,
+      #ffffff 55%
+    );
+}
+
+.card_indigo {
+  --accent: #4f46e5;
+  background:
+    linear-gradient(
+      145deg,
+      #eef2ff 0%,
+      #ffffff 55%
+    );
+}
+
+.card_green,
+.card_emerald {
+  --accent: #059669;
+  background:
+    linear-gradient(
+      145deg,
+      #ecfdf5 0%,
+      #ffffff 55%
+    );
+}
+
+.card_purple {
+  --accent: #7c3aed;
+  background:
+    linear-gradient(
+      145deg,
+      #f5f3ff 0%,
+      #ffffff 55%
+    );
+}
+
+.card_amber {
+  --accent: #d97706;
+  background:
+    linear-gradient(
+      145deg,
+      #fffbeb 0%,
+      #ffffff 55%
+    );
+}
+
+.card_orange {
+  --accent: #ea580c;
+  background:
+    linear-gradient(
+      145deg,
+      #fff7ed 0%,
+      #ffffff 55%
+    );
+}
+
+.card_red {
+  --accent: #dc2626;
+  background:
+    linear-gradient(
+      145deg,
+      #fef2f2 0%,
+      #ffffff 55%
+    );
+}
+
+.card_rose {
+  --accent: #e11d48;
+  background:
+    linear-gradient(
+      145deg,
+      #fff1f2 0%,
+      #ffffff 55%
+    );
+}
+
+.card_cyan {
+  --accent: #0891b2;
+  background:
+    linear-gradient(
+      145deg,
+      #ecfeff 0%,
+      #ffffff 55%
+    );
+}
+
+.icon {
+  position: absolute;
+
+  top: 17px;
+  right: 17px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 44px;
+  height: 44px;
+
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 14px;
+
+  box-shadow:
+    0 6px 18px rgba(15, 23, 42, 0.06);
+
+  transition:
+    transform 180ms ease;
+}
+
+.card:hover .icon {
+  transform: scale(1.06);
+}
+
+.blue {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.indigo {
+  background: #e0e7ff;
+  color: #4f46e5;
+}
+
+.green,
+.emerald {
+  background: #d1fae5;
+  color: #059669;
+}
+
+.purple {
+  background: #ede9fe;
+  color: #7c3aed;
+}
+
+.amber {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.orange {
+  background: #ffedd5;
+  color: #ea580c;
+}
+
+.red {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.rose {
+  background: #ffe4e6;
+  color: #e11d48;
+}
+
+.cyan {
+  background: #cffafe;
+  color: #0891b2;
+}
+
+.title {
+  margin: 0;
+
+  padding-right: 56px;
+
+  color: #64748b;
+
+  font-size: 13px;
+  font-weight: 650;
+
+  letter-spacing: 0.01em;
+}
+
+.value {
+  display: block;
+
+  margin-top: 18px;
+
+  color: #0f172a;
+
+  font-size: clamp(26px, 2vw, 31px);
+  line-height: 1;
+
+  letter-spacing: -0.045em;
+}
+
+.subtitle {
+  margin: 11px 0 0;
+
+  color: #64748b;
+
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+@media (max-width: 640px) {
+  .card {
+    padding: 18px;
+    border-radius: 16px;
+  }
+
+  .icon {
+    top: 15px;
+    right: 15px;
+
+    width: 40px;
+    height: 40px;
+  }
+
+  .value {
+    font-size: 26px;
+  }
+}

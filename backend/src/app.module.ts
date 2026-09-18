@@ -19,6 +19,9 @@ import { TermsSectionsModule } from './terms-sections/terms-sections.module.js';
 import { PartnerLeadsModule } from './partner-leads/partner-leads.module.js';
 import { ContactLeadsModule } from './contact-leads/contact-leads.module.js';
 import { OrdersModule } from "./orders/orders.module.js";
+import {
+  SuperAdminModule,
+} from './super-admin/super-admin.module.js';
 @Module({
   imports: [
     PrismaModule,
@@ -37,6 +40,7 @@ import { OrdersModule } from "./orders/orders.module.js";
     PartnerLeadsModule,
     ContactLeadsModule,
     OrdersModule,
+    SuperAdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

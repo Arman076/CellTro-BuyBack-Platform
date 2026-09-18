@@ -17,6 +17,95 @@ import styles from "./ExactValueModal.module.css";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
+const CUSTOMER_SESSION_TOKEN_KEY =
+  "celltroCustomerSessionToken";
+
+const CUSTOMER_SESSION_EXPIRES_KEY =
+  "celltroCustomerSessionExpiresAt";
+
+const VERIFIED_CUSTOMER_PHONE_KEY =
+  "celltroVerifiedCustomerPhone";
+
+function getStoredCustomerSession() {
+  if (
+    typeof window ===
+    "undefined"
+  ) {
+    return {
+      token: "",
+      phone: "",
+    };
+  }
+
+  const token =
+    localStorage.getItem(
+      CUSTOMER_SESSION_TOKEN_KEY,
+    ) || "";
+
+  const expiresAt =
+    localStorage.getItem(
+      CUSTOMER_SESSION_EXPIRES_KEY,
+    ) || "";
+
+  const phone =
+    localStorage.getItem(
+      VERIFIED_CUSTOMER_PHONE_KEY,
+    ) || "";
+
+  if (
+    !token ||
+    !expiresAt ||
+    new Date(
+      expiresAt,
+    ).getTime() <=
+      Date.now()
+  ) {
+    localStorage.removeItem(
+      CUSTOMER_SESSION_TOKEN_KEY,
+    );
+
+    localStorage.removeItem(
+      CUSTOMER_SESSION_EXPIRES_KEY,
+    );
+
+    localStorage.removeItem(
+      VERIFIED_CUSTOMER_PHONE_KEY,
+    );
+
+    return {
+      token: "",
+      phone: "",
+    };
+  }
+
+  return {
+    token,
+    phone,
+  };
+}
+
+function storeCustomerSession(
+  token: string,
+  expiresAt: string,
+  phone: string,
+) {
+  localStorage.setItem(
+    CUSTOMER_SESSION_TOKEN_KEY,
+    token,
+  );
+
+  localStorage.setItem(
+    CUSTOMER_SESSION_EXPIRES_KEY,
+    expiresAt,
+  );
+
+  localStorage.setItem(
+    VERIFIED_CUSTOMER_PHONE_KEY,
+    phone,
+  );
+}
+
+
 type ChildOption = {
   id: number;
   label: string;
@@ -693,7 +782,14 @@ export default function ExactValueModal({
         setQuestionIndex(0);
         setAnswers({});
         setStep("QUESTIONS");
-        setPhone("");
+
+        const storedSession =
+          getStoredCustomerSession();
+
+        setPhone(
+          storedSession.phone,
+        );
+
         setOtp("");
         setSessionId(null);
         setQuote(null);
@@ -931,33 +1027,213 @@ export default function ExactValueModal({
     }
   }
 
+  async function requestQuoteOrOtp(
+    normalizedPhone: string,
+  ) {
+    const storedSession =
+      getStoredCustomerSession();
+
+    const response =
+      await apiJson(
+        `${API}/questionnaire/quote/send-otp`,
+        {
+          method: "POST",
+
+          body: JSON.stringify({
+            productId,
+            variantId,
+
+            phone:
+              normalizedPhone,
+
+            /*
+             * This is the important part:
+             * backend can now recognise the 24-hour
+             * verified customer session.
+             *
+             * Product 2 / Product 3:
+             *   otpRequired = false
+             *
+             * Product 4:
+             *   otpRequired = true
+             */
+            customerSessionToken:
+              storedSession.token,
+
+            answers:
+              Object.values(
+                answers,
+              ),
+          }),
+        },
+      );
+
+    if (
+      response?.existingOrder
+    ) {
+      setSessionId(null);
+      setOtp("");
+      setQuote(null);
+      setDevOtp(null);
+
+      setError(
+        `You already have an active order ${response.orderNumber}. Please track the existing order instead.`,
+      );
+
+      return;
+    }
+
+    if (
+      !response?.sessionId
+    ) {
+      throw new Error(
+        "Quote session could not be created.",
+      );
+    }
+
+    setPhone(
+      normalizedPhone,
+    );
+
+    setSessionId(
+      String(
+        response.sessionId,
+      ),
+    );
+
+    /*
+     * Valid 24-hour session and still inside
+     * the 3-distinct-device allowance.
+     *
+     * No OTP screen.
+     */
+    if (
+      response?.otpRequired ===
+      false
+    ) {
+      setDevOtp(null);
+      setOtp("");
+
+      setQuote({
+        basePrice:
+          Number(
+            response.basePrice,
+          ),
+
+        totalDeduction:
+          Number(
+            response.totalDeduction,
+          ),
+
+        finalPrice:
+          Number(
+            response.finalPrice,
+          ),
+      });
+
+      setStep("RESULT");
+
+      return;
+    }
+
+    /*
+     * First ever quote OR 4th distinct device.
+     * Backend has sent a fresh OTP.
+     */
+    setDevOtp(
+      response.devOtp ?? null,
+    );
+
+    setOtp("");
+    setStep("OTP");
+  }
+
+  async function beginBestPrice() {
+    setError("");
+
+    const storedSession =
+      getStoredCustomerSession();
+
+    const verifiedPhone =
+      storedSession.phone
+        .replace(
+          /\D/g,
+          "",
+        );
+
+    /*
+     * Customer already completed OTP earlier and the
+     * 24-hour session is still valid.
+     *
+     * Skip the phone screen as well.
+     * Backend decides whether this is device #2/#3
+     * (no OTP) or device #4 (fresh OTP required).
+     */
+    if (
+      storedSession.token &&
+      /^[6-9]\d{9}$/.test(
+        verifiedPhone,
+      )
+    ) {
+      try {
+        setLoading(true);
+
+        await requestQuoteOrOtp(
+          verifiedPhone,
+        );
+      } catch (e) {
+        setError(
+          e instanceof Error
+            ? e.message
+            : "Unable to calculate quote",
+        );
+      } finally {
+        setLoading(false);
+      }
+
+      return;
+    }
+
+    /*
+     * First visit / expired 24-hour session.
+     * Ask mobile number, then OTP.
+     */
+    setStep("PHONE");
+  }
+
   async function sendOtp() {
     setError("");
-    const normalized = phone.replace(/\D/g, "");
 
-    if (!/^[6-9]\d{9}$/.test(normalized)) {
-      setError("Enter a valid 10-digit Indian mobile number.");
+    const normalized =
+      phone.replace(
+        /\D/g,
+        "",
+      );
+
+    if (
+      !/^[6-9]\d{9}$/.test(
+        normalized,
+      )
+    ) {
+      setError(
+        "Enter a valid 10-digit Indian mobile number.",
+      );
+
       return;
     }
 
     try {
       setLoading(true);
 
-      const response = await apiJson(`${API}/questionnaire/quote/send-otp`, {
-        method: "POST",
-        body: JSON.stringify({
-          productId,
-          variantId,
-          phone: normalized,
-          answers: Object.values(answers),
-        }),
-      });
-
-      setSessionId(response.sessionId);
-      setDevOtp(response.devOtp ?? null);
-      setStep("OTP");
+      await requestQuoteOrOtp(
+        normalized,
+      );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to send OTP");
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Unable to send OTP",
+      );
     } finally {
       setLoading(false);
     }
@@ -978,9 +1254,41 @@ export default function ExactValueModal({
         `${API}/questionnaire/quote/verify-otp`,
         {
           method: "POST",
-          body: JSON.stringify({ sessionId, otp }),
+          body: JSON.stringify({
+            sessionId,
+            otp,
+
+            customerSessionToken:
+              getStoredCustomerSession()
+                .token,
+          }),
         },
       );
+
+      const normalizedPhone =
+        phone.replace(
+          /\D/g,
+          "",
+        );
+
+      if (
+        response
+          ?.customerSessionToken &&
+        response
+          ?.customerSessionExpiresAt
+      ) {
+        storeCustomerSession(
+          String(
+            response.customerSessionToken,
+          ),
+
+          String(
+            response.customerSessionExpiresAt,
+          ),
+
+          normalizedPhone,
+        );
+      }
 
       setQuote({
         basePrice: Number(response.basePrice),
@@ -1006,18 +1314,40 @@ export default function ExactValueModal({
 
     // Keep the already verified customer + quote available for the pickup flow.
     // No second OTP is required on the address page.
-    sessionStorage.setItem("verifiedCustomerPhone", normalizedPhone);
+    if (!sessionId) {
+      setError(
+        "Verified quote session is missing. Please verify OTP again.",
+      );
+      return;
+    }
+
+    sessionStorage.setItem(
+      "verifiedCustomerPhone",
+      normalizedPhone,
+    );
+
     sessionStorage.setItem(
       "sellQuote",
       JSON.stringify({
+        // Backend uses this to link the exact quote journey
+        // to the SellOrder atomically.
+        enquirySessionId:
+          sessionId,
+
         productId,
         productName,
         productImage,
         variantId,
         variantLabel,
-        basePrice: quote.basePrice,
-        totalDeduction: quote.totalDeduction,
-        finalPrice: quote.finalPrice,
+
+        basePrice:
+          quote.basePrice,
+
+        totalDeduction:
+          quote.totalDeduction,
+
+        finalPrice:
+          quote.finalPrice,
       }),
     );
 
@@ -1200,11 +1530,13 @@ export default function ExactValueModal({
                   type="button"
                   className={styles["best-price-button"]}
                   onClick={() => {
-                    setError("");
-                    setStep("PHONE");
+                    void beginBestPrice();
                   }}
+                  disabled={loading}
                 >
-                  Get Best Price
+                  {loading
+                    ? "Checking..."
+                    : "Get Best Price"}
                 </button>
               </div>
             )}

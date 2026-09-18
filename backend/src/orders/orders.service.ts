@@ -19,17 +19,21 @@ export class OrdersService {
 
   private addressType(type: unknown) {
     const value = String(type || "").toUpperCase();
+
     if (!["HOME", "OFFICE", "OTHER"].includes(value)) {
       throw new BadRequestException("Invalid address type.");
     }
+
     return value as "HOME" | "OFFICE" | "OTHER";
   }
 
   private dateOnly(value: unknown) {
     const raw = String(value || "");
+
     if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
       throw new BadRequestException("Invalid pickup date.");
     }
+
     return new Date(`${raw}T00:00:00.000Z`);
   }
 
@@ -40,9 +44,11 @@ export class OrdersService {
       String(date.getMonth() + 1).padStart(2, "0"),
       String(date.getDate()).padStart(2, "0"),
     ].join("");
+
     const tail = `${Date.now().toString(36)}${Math.random()
       .toString(36)
       .slice(2, 6)}`.toUpperCase();
+
     return `CEL-${ymd}-${tail}`;
   }
 
@@ -102,7 +108,9 @@ export class OrdersService {
     const phone = this.normalizePhone(phoneInput);
 
     if (!this.validateIndianPhone(phone)) {
-      throw new BadRequestException("Valid verified mobile number is required.");
+      throw new BadRequestException(
+        "Valid verified mobile number is required.",
+      );
     }
 
     const customer = await this.prisma.customer.findUnique({
@@ -133,7 +141,9 @@ export class OrdersService {
     const phone = this.normalizePhone(body?.phone);
 
     if (!this.validateIndianPhone(phone)) {
-      throw new BadRequestException("Valid verified mobile number is required.");
+      throw new BadRequestException(
+        "Valid verified mobile number is required.",
+      );
     }
 
     const customer = await this.prisma.customer.upsert({
@@ -174,7 +184,9 @@ export class OrdersService {
     const phone = this.normalizePhone(body?.phone);
 
     if (!this.validateIndianPhone(phone)) {
-      throw new BadRequestException("Valid verified mobile number is required.");
+      throw new BadRequestException(
+        "Valid verified mobile number is required.",
+      );
     }
 
     const existing = await this.prisma.customerAddress.findFirst({
@@ -185,7 +197,9 @@ export class OrdersService {
       },
     });
 
-    if (!existing) throw new NotFoundException("Address not found.");
+    if (!existing) {
+      throw new NotFoundException("Address not found.");
+    }
 
     const address = await this.prisma.customerAddress.update({
       where: { id },
@@ -226,7 +240,9 @@ export class OrdersService {
       },
     });
 
-    if (!existing) throw new NotFoundException("Address not found.");
+    if (!existing) {
+      throw new NotFoundException("Address not found.");
+    }
 
     await this.prisma.customerAddress.update({
       where: { id },
@@ -240,7 +256,9 @@ export class OrdersService {
     const phone = this.normalizePhone(body?.phone);
 
     if (!this.validateIndianPhone(phone)) {
-      throw new BadRequestException("Valid verified mobile number is required.");
+      throw new BadRequestException(
+        "Valid verified mobile number is required.",
+      );
     }
 
     const addressId = Number(body?.addressId);
@@ -262,7 +280,9 @@ export class OrdersService {
       payoutMethod === "UPI" &&
       !this.validateIndianPhone(payoutUpiMobile || "")
     ) {
-      throw new BadRequestException("Valid UPI-linked mobile number is required.");
+      throw new BadRequestException(
+        "Valid UPI-linked mobile number is required.",
+      );
     }
 
     if (
@@ -272,6 +292,130 @@ export class OrdersService {
       !Number.isFinite(Number(quote.finalPrice))
     ) {
       throw new BadRequestException("Valid quote details are required.");
+    }
+
+    const productId = Number(quote.productId);
+    const variantId = Number(quote.variantId);
+    const clientFinalPrice = Number(quote.finalPrice);
+    const enquirySessionId = String(
+      quote?.enquirySessionId || "",
+    ).trim();
+
+    /*
+     * Hard duplicate-order protection at backend level.
+     * Frontend checks are only UX; backend remains authoritative.
+     */
+    const existingActiveOrder = await this.prisma.sellOrder.findFirst({
+      where: {
+        productId,
+        variantId,
+        status: {
+          notIn: ["COMPLETED", "CANCELLED"],
+        },
+        customer: {
+          is: {
+            phone,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      select: {
+        orderNumber: true,
+        status: true,
+      },
+    });
+
+    if (existingActiveOrder) {
+      throw new BadRequestException(
+        `An active order already exists for this device: ${existingActiveOrder.orderNumber}.`,
+      );
+    }
+
+    /*
+     * Resolve one verified, still-unconverted enquiry journey.
+     * Prefer exact technical session ID, then safe fallback to
+     * same phone + product + variant.
+     */
+    let enquiry = enquirySessionId
+      ? await this.prisma.enquirySession.findFirst({
+          where: {
+            sessionId: enquirySessionId,
+            phone,
+            productId,
+            variantId,
+            orderId: null,
+
+            OR: [
+              {
+                otpVerifiedAt: {
+                  not: null,
+                },
+              },
+              {
+                verifiedSessionId: {
+                  not: null,
+                },
+              },
+            ],
+
+            quoteViewedAt: {
+              not: null,
+            },
+          },
+          orderBy: {
+            updatedAt: "desc",
+          },
+        })
+      : null;
+
+    if (!enquiry) {
+      enquiry = await this.prisma.enquirySession.findFirst({
+        where: {
+          phone,
+          productId,
+          variantId,
+          orderId: null,
+
+          OR: [
+            {
+              otpVerifiedAt: {
+                not: null,
+              },
+            },
+            {
+              verifiedSessionId: {
+                not: null,
+              },
+            },
+          ],
+
+          quoteViewedAt: {
+            not: null,
+          },
+        },
+        orderBy: {
+          updatedAt: "desc",
+        },
+      });
+    }
+
+    if (!enquiry || enquiry.quoteAmount === null) {
+      throw new BadRequestException(
+        "Verified quote session not found. Please verify OTP and get the latest quote again.",
+      );
+    }
+
+    const authoritativeFinalPrice = Number(enquiry.quoteAmount);
+
+    if (
+      !Number.isFinite(authoritativeFinalPrice) ||
+      Math.abs(authoritativeFinalPrice - clientFinalPrice) > 0.01
+    ) {
+      throw new BadRequestException(
+        "Quote amount mismatch. Please refresh the quote and try again.",
+      );
     }
 
     await this.ensureDefaultSlots();
@@ -298,61 +442,98 @@ export class OrdersService {
       }),
     ]);
 
-    if (!address) throw new BadRequestException("Selected address is invalid.");
-    if (!slot) throw new BadRequestException("Selected pickup slot is invalid.");
+    if (!address) {
+      throw new BadRequestException("Selected address is invalid.");
+    }
+
+    if (!slot) {
+      throw new BadRequestException("Selected pickup slot is invalid.");
+    }
 
     const orderNumber = this.orderNumber();
 
-    const order = await this.prisma.sellOrder.create({
-      data: {
-        orderNumber,
-        customerId: customer.id,
+    /*
+     * Order create + enquiry conversion are one transaction.
+     * This prevents a successfully-created order from remaining
+     * visible as an active enquiry if linking fails.
+     */
+    const order = await this.prisma.$transaction(async (tx) => {
+      const createdOrder = await tx.sellOrder.create({
+        data: {
+          orderNumber,
+          customerId: customer.id,
 
-        // Snapshot product/quote data. Existing Product/Variant tables are untouched.
-        productId: Number(quote.productId),
-        variantId: Number(quote.variantId),
-        productName: String(quote.productName || "Device"),
-        productImage: quote.productImage ? String(quote.productImage) : null,
-        variantLabel: String(quote.variantLabel || ""),
-        basePrice: Number(quote.basePrice || 0),
-        totalDeduction: Number(quote.totalDeduction || 0),
-        finalPrice: Number(quote.finalPrice || 0),
-        questionnaireSnapshot: quote.questionnaireSnapshot ?? undefined,
+          productId,
+          variantId,
+          productName: String(quote.productName || "Device"),
+          productImage: quote.productImage
+            ? String(quote.productImage)
+            : null,
+          variantLabel: String(quote.variantLabel || ""),
+          basePrice: Number(quote.basePrice || 0),
+          totalDeduction: Number(quote.totalDeduction || 0),
 
-        pickupDate,
-        pickupSlotId: slot.id,
-        payoutMethod: payoutMethod as "CASH" | "UPI",
-        payoutUpiMobile,
+          /*
+           * Server-side stored quote is authoritative.
+           */
+          finalPrice: authoritativeFinalPrice,
 
-        addressSnapshot: {
-          create: {
-            sourceAddressId: address.id,
-            fullName: address.fullName,
-            phone,
-            house: address.house,
-            street: address.street,
-            locality: address.locality,
-            landmark: address.landmark,
-            pincode: address.pincode,
-            city: address.city,
-            state: address.state,
-            type: address.type,
+          questionnaireSnapshot:
+            quote.questionnaireSnapshot ?? undefined,
+
+          pickupDate,
+          pickupSlotId: slot.id,
+          payoutMethod: payoutMethod as "CASH" | "UPI",
+          payoutUpiMobile,
+
+          addressSnapshot: {
+            create: {
+              sourceAddressId: address.id,
+              fullName: address.fullName,
+              phone,
+              house: address.house,
+              street: address.street,
+              locality: address.locality,
+              landmark: address.landmark,
+              pincode: address.pincode,
+              city: address.city,
+              state: address.state,
+              type: address.type,
+            },
+          },
+
+          statusHistory: {
+            create: {
+              status: "PICKUP_REQUESTED",
+              note: "Pickup request created by customer.",
+            },
           },
         },
-
-        statusHistory: {
-          create: {
-            status: "PICKUP_REQUESTED",
-            note: "Pickup request created by customer.",
-          },
+        include: {
+          pickupSlot: true,
+          addressSnapshot: true,
+          statusHistory: true,
+          reschedules: true,
         },
-      },
-      include: {
-        pickupSlot: true,
-        addressSnapshot: true,
-        statusHistory: true,
-        reschedules: true,
-      },
+      });
+
+      const linkResult = await tx.enquirySession.updateMany({
+        where: {
+          id: enquiry.id,
+          orderId: null,
+        },
+        data: {
+          orderId: createdOrder.id,
+        },
+      });
+
+      if (linkResult.count !== 1) {
+        throw new BadRequestException(
+          "This quote has already been converted. Please check your existing order.",
+        );
+      }
+
+      return createdOrder;
     });
 
     return this.toOrderView(order);
@@ -373,7 +554,10 @@ export class OrdersService {
       },
     });
 
-    if (!order) throw new NotFoundException("Order not found.");
+    if (!order) {
+      throw new NotFoundException("Order not found.");
+    }
+
     return this.toOrderView(order);
   }
 
@@ -391,11 +575,18 @@ export class OrdersService {
       }),
     ]);
 
-    if (!order) throw new NotFoundException("Order not found.");
-    if (!slot) throw new BadRequestException("Pickup slot not found.");
+    if (!order) {
+      throw new NotFoundException("Order not found.");
+    }
+
+    if (!slot) {
+      throw new BadRequestException("Pickup slot not found.");
+    }
 
     if (["COMPLETED", "CANCELLED"].includes(order.status)) {
-      throw new BadRequestException("This order can no longer be rescheduled.");
+      throw new BadRequestException(
+        "This order can no longer be rescheduled.",
+      );
     }
 
     await this.prisma.$transaction([
@@ -427,30 +618,71 @@ export class OrdersService {
     return this.getOrder(orderNumber);
   }
 
-  async cancelOrder(orderNumber: string) {
+  async cancelOrder(
+    orderNumber: string,
+    body?: {
+      reasonCode?: string;
+      reasonText?: string;
+    },
+  ) {
     const order = await this.prisma.sellOrder.findUnique({
-      where: { orderNumber },
+      where: {
+        orderNumber,
+      },
     });
 
-    if (!order) throw new NotFoundException("Order not found.");
-
-    if (order.status === "COMPLETED") {
-      throw new BadRequestException("Completed order cannot be cancelled.");
+    if (!order) {
+      throw new NotFoundException("Order not found.");
     }
 
+    if (order.status === "COMPLETED") {
+      throw new BadRequestException(
+        "Completed order cannot be cancelled.",
+      );
+    }
+
+    /*
+     * Customer cancellation reason remains optional.
+     */
+    const reasonCode =
+      String(body?.reasonCode || "").trim() || null;
+
+    const reasonText =
+      String(body?.reasonText || "").trim() || null;
+
     if (order.status !== "CANCELLED") {
-      await this.prisma.sellOrder.update({
-        where: { id: order.id },
-        data: {
-          status: "CANCELLED",
-          statusHistory: {
-            create: {
-              status: "CANCELLED",
-              note: "Pickup request cancelled by customer.",
-            },
+      const reasonSummary =
+        reasonText || reasonCode;
+
+      await this.prisma.$transaction([
+        this.prisma.sellOrder.update({
+          where: {
+            id: order.id,
           },
-        },
-      });
+          data: {
+            status: "CANCELLED",
+          },
+        }),
+
+        this.prisma.orderStatusHistory.create({
+          data: {
+            orderId: order.id,
+            status: "CANCELLED",
+            note: reasonSummary
+              ? `Pickup request cancelled by customer. Reason: ${reasonSummary}`
+              : "Pickup request cancelled by customer.",
+          },
+        }),
+
+        this.prisma.orderCancellation.create({
+          data: {
+            orderId: order.id,
+            actor: "CUSTOMER",
+            reasonCode,
+            reasonText,
+          },
+        }),
+      ]);
     }
 
     return this.getOrder(orderNumber);

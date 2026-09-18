@@ -1,0 +1,36 @@
+.shell {
+  min-height: 100vh;
+
+  background: var(--background);
+}
+
+.contentArea {
+  min-height: 100vh;
+
+  margin-left: var(--sidebar-width);
+}
+
+.main {
+  width: 100%;
+  max-width: 1800px;
+
+  margin: 0 auto;
+
+  padding: 28px;
+}
+
+@media (max-width: 1024px) {
+  .contentArea {
+    margin-left: 0;
+  }
+
+  .main {
+    padding: 22px;
+  }
+}
+
+@media (max-width: 640px) {
+  .main {
+    padding: 16px;
+  }
+}
