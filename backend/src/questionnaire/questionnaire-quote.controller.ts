@@ -3,7 +3,14 @@ import {
   Body,
   Controller,
   Post,
+  Req,
+  Res,
 } from "@nestjs/common";
+
+import type {
+  Request,
+  Response,
+} from "express";
 import {
   createHash,
   randomBytes,
@@ -20,6 +27,7 @@ import {
 
 const CUSTOMER_SESSION_HOURS = 24;
 const MAX_DISTINCT_DEVICES_PER_SESSION = 3;
+const CUSTOMER_SESSION_COOKIE = "celltro_customer_session";
 
 @Controller("questionnaire/quote")
 export class QuestionnaireQuoteController {
@@ -36,6 +44,54 @@ export class QuestionnaireQuoteController {
   ) {
     return String(value ?? "")
       .replace(/\D/g, "");
+  }
+
+  private readCustomerSessionCookie(
+    request: Request,
+  ) {
+    const rawCookieHeader =
+      String(
+        request.headers.cookie ?? "",
+      );
+
+    for (const part of rawCookieHeader.split(";")) {
+      const [rawName, ...rawValueParts] =
+        part.trim().split("=");
+
+      if (
+        rawName ===
+        CUSTOMER_SESSION_COOKIE
+      ) {
+        return decodeURIComponent(
+          rawValueParts.join("="),
+        ).trim();
+      }
+    }
+
+    return "";
+  }
+
+  private writeCustomerSessionCookie(
+    response: Response,
+    rawToken: string,
+  ) {
+    response.cookie(
+      CUSTOMER_SESSION_COOKIE,
+      rawToken,
+      {
+        httpOnly: true,
+        secure:
+          process.env.NODE_ENV ===
+          "production",
+        sameSite: "lax",
+        maxAge:
+          CUSTOMER_SESSION_HOURS *
+          60 *
+          60 *
+          1000,
+        path: "/",
+      },
+    );
   }
 
   private hashToken(
@@ -236,6 +292,9 @@ export class QuestionnaireQuoteController {
   async sendOtp(
     @Body()
     body: any,
+
+    @Req()
+    request: Request,
   ) {
     const phone =
       this.normalizePhone(
@@ -322,11 +381,28 @@ export class QuestionnaireQuoteController {
       };
     }
 
+    /*
+     * Production source of truth = HttpOnly cookie.
+     * Body token is accepted only as a temporary local-development
+     * compatibility path while the customer frontend is migrated.
+     */
+    const cookieSessionToken =
+      this.readCustomerSessionCookie(
+        request,
+      );
+
+    const legacyBodyToken =
+      process.env.NODE_ENV !==
+      "production"
+        ? String(
+            body?.customerSessionToken ||
+              "",
+          ).trim()
+        : "";
+
     const customerSessionToken =
-      String(
-        body?.customerSessionToken ||
-          "",
-      ).trim();
+      cookieSessionToken ||
+      legacyBodyToken;
 
     const verifiedSession =
       await this.getVerifiedSession(
@@ -551,6 +627,14 @@ export class QuestionnaireQuoteController {
       otp: string;
       customerSessionToken?: string;
     },
+
+    @Req()
+    request: Request,
+
+    @Res({
+      passthrough: true,
+    })
+    response: Response,
   ) {
     const result =
       await this.service.verifyOtp(
@@ -597,7 +681,15 @@ export class QuestionnaireQuoteController {
     } =
       await this.createVerifiedSession(
         phone,
-        body.customerSessionToken,
+        this.readCustomerSessionCookie(
+          request,
+        ) ||
+          (
+            process.env.NODE_ENV !==
+            "production"
+              ? body.customerSessionToken
+              : undefined
+          ),
       );
 
     const now =
@@ -638,11 +730,27 @@ export class QuestionnaireQuoteController {
       },
     });
 
+    this.writeCustomerSessionCookie(
+      response,
+      rawToken,
+    );
+
     return {
       ...result,
 
-      customerSessionToken:
-        rawToken,
+      /*
+       * Temporary backward compatibility for local development only.
+       * Production never exposes the bearer token to browser JavaScript.
+       */
+      ...(
+        process.env.NODE_ENV !==
+        "production"
+          ? {
+              customerSessionToken:
+                rawToken,
+            }
+          : {}
+      ),
 
       customerSessionExpiresAt:
         verifiedSession.expiresAt.toISOString(),

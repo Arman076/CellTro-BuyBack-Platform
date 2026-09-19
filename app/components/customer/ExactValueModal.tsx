@@ -34,6 +34,8 @@ function getStoredCustomerSession() {
     return {
       token: "",
       phone: "",
+      expiresAt: "",
+      active: false,
     };
   }
 
@@ -52,14 +54,19 @@ function getStoredCustomerSession() {
       VERIFIED_CUSTOMER_PHONE_KEY,
     ) || "";
 
-  if (
-    !token ||
-    !expiresAt ||
-    new Date(
-      expiresAt,
-    ).getTime() <=
-      Date.now()
-  ) {
+  const active =
+    Boolean(
+      expiresAt &&
+      /^[6-9]\d{9}$/.test(
+        phone,
+      ) &&
+      new Date(
+        expiresAt,
+      ).getTime() >
+        Date.now(),
+    );
+
+  if (!active) {
     localStorage.removeItem(
       CUSTOMER_SESSION_TOKEN_KEY,
     );
@@ -75,12 +82,16 @@ function getStoredCustomerSession() {
     return {
       token: "",
       phone: "",
+      expiresAt: "",
+      active: false,
     };
   }
 
   return {
     token,
     phone,
+    expiresAt,
+    active: true,
   };
 }
 
@@ -89,10 +100,21 @@ function storeCustomerSession(
   expiresAt: string,
   phone: string,
 ) {
-  localStorage.setItem(
-    CUSTOMER_SESSION_TOKEN_KEY,
-    token,
-  );
+  /*
+   * Production authentication is the HttpOnly cookie.
+   * A raw token may exist only in local development for
+   * temporary backward compatibility.
+   */
+  if (token) {
+    localStorage.setItem(
+      CUSTOMER_SESSION_TOKEN_KEY,
+      token,
+    );
+  } else {
+    localStorage.removeItem(
+      CUSTOMER_SESSION_TOKEN_KEY,
+    );
+  }
 
   localStorage.setItem(
     CUSTOMER_SESSION_EXPIRES_KEY,
@@ -180,6 +202,7 @@ type Props = {
 async function apiJson(url: string, init?: RequestInit) {
   const response = await fetch(url, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers || {}),
@@ -1170,7 +1193,7 @@ export default function ExactValueModal({
      * (no OTP) or device #4 (fresh OTP required).
      */
     if (
-      storedSession.token &&
+      storedSession.active &&
       /^[6-9]\d{9}$/.test(
         verifiedPhone,
       )
@@ -1273,13 +1296,12 @@ export default function ExactValueModal({
 
       if (
         response
-          ?.customerSessionToken &&
-        response
           ?.customerSessionExpiresAt
       ) {
         storeCustomerSession(
           String(
-            response.customerSessionToken,
+            response?.customerSessionToken ||
+              "",
           ),
 
           String(

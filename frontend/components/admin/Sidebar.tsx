@@ -16,6 +16,7 @@ import {
   X,
   Handshake,
   MessageSquare,
+  Settings2,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -32,6 +33,11 @@ const menuItems = [
   { name: 'RAM / Storage', href: '/admin/catalogue/variants', icon: Layers3 },
   { name: 'Catalogue Upload', href: '/admin/catalogue/import', icon: Upload },
   { name: 'Questionnaire', href: '/admin/questionnaire', icon: ClipboardList },
+  {
+  name: 'Customer Flow',
+  href: '/admin/flow-config',
+  icon: ClipboardList,
+},
   { name: 'Pricing', href: '/admin/pricing', icon: IndianRupee },
 
   {

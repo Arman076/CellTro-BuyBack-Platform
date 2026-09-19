@@ -33,6 +33,7 @@ type PickupSlot = {
 };
 
 type SellQuote = {
+  enquirySessionId: string;
   productId: number;
   productName: string;
   productImage?: string | null;
@@ -59,15 +60,11 @@ const emptyForm = {
   type: "Home" as AddressType,
 };
 
-const fallbackSlots: PickupSlot[] = [
-  { id: -1, code: "10_14", label: "10:00 AM - 02:00 PM", startTime: "10:00", endTime: "14:00" },
-  { id: -2, code: "14_18", label: "02:00 PM - 06:00 PM", startTime: "14:00", endTime: "18:00" },
-  { id: -3, code: "18_22", label: "06:00 PM - 10:00 PM", startTime: "18:00", endTime: "22:00" },
-];
 
 async function apiJson(url: string, init?: RequestInit) {
   const response = await fetch(url, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers || {}),
@@ -179,9 +176,7 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
 
       try {
         const [addressData, slotData] = await Promise.all([
-          apiJson(
-            `${API}/orders/customer-addresses?phone=${encodeURIComponent(verifiedPhone)}`,
-          ),
+          apiJson(`${API}/orders/customer-addresses`),
           apiJson(`${API}/orders/pickup-slots`),
         ]);
 
@@ -190,15 +185,21 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
         const nextAddresses = Array.isArray(addressData) ? addressData : [];
         setAddresses(nextAddresses);
 
-        if (nextAddresses.length > 0) {
-          setSelectedAddressId(nextAddresses[0].id);
-        }
+        const firstServiceableAddress = nextAddresses.find(
+          (address: Address) => address.serviceable,
+        );
 
-        setSlots(Array.isArray(slotData) && slotData.length ? slotData : fallbackSlots);
+        setSelectedAddressId(firstServiceableAddress?.id ?? null);
+
+        const nextSlots = Array.isArray(slotData) ? slotData : [];
+        setSlots(nextSlots);
+
+        if (!nextSlots.length) {
+          setError("No pickup slots are currently available.");
+        }
       } catch (e) {
         if (cancelled) return;
-        // Slots remain usable for UI even before backend migration is applied.
-        setSlots(fallbackSlots);
+        setSlots([]);
         setError(
           e instanceof Error
             ? e.message
@@ -223,16 +224,16 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
     }));
 
     if (field === "pincode") {
+      const clean = value.replace(/\D/g, "").slice(0, 6);
+
       setPincodeStatus("idle");
 
-      if (value.length < 6) {
-        setForm((prev) => ({
-          ...prev,
-          pincode: value.replace(/\D/g, "").slice(0, 6),
-          city: "",
-          state: "",
-        }));
-      }
+      setForm((prev) => ({
+        ...prev,
+        pincode: clean,
+        city: "",
+        state: "",
+      }));
     }
   }
 
@@ -241,131 +242,54 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
 
     setCheckingPincode(true);
     setPincodeStatus("idle");
+    setError("");
 
     try {
-      // Temporary serviceability until Super Admin pincode mapping is connected.
-      const supportedPincodes = new Set([
-        "400001",
-        "400002",
-        "400003",
-        "400004",
-        "400005",
-        "400006",
-        "400007",
-        "400008",
-        "400009",
-        "400010",
-        "400011",
-        "400012",
-        "400013",
-        "400014",
-        "400015",
-        "400016",
-        "400017",
-        "400018",
-        "400019",
-        "400020",
-        "400021",
-        "400022",
-        "400023",
-        "400024",
-        "400025",
-        "400026",
-        "400027",
-        "400028",
-        "400029",
-        "400030",
-        "400031",
-        "400032",
-        "400033",
-        "400034",
-        "400035",
-        "400036",
-        "400037",
-        "400038",
-        "400039",
-        "400040",
-        "400042",
-        "400043",
-        "400049",
-        "400050",
-        "400051",
-        "400052",
-        "400053",
-        "400054",
-        "400055",
-        "400056",
-        "400057",
-        "400058",
-        "400059",
-        "400060",
-        "400061",
-        "400062",
-        "400063",
-        "400064",
-        "400065",
-        "400066",
-        "400067",
-        "400068",
-        "400069",
-        "400070",
-        "400071",
-        "400072",
-        "400074",
-        "400075",
-        "400076",
-        "400077",
-        "400078",
-        "400079",
-        "400080",
-        "400081",
-        "400082",
-        "400083",
-        "400084",
-        "400085",
-        "400086",
-        "400087",
-        "400088",
-        "400089",
-        "400090",
-        "400091",
-        "400092",
-        "400093",
-        "400094",
-        "400095",
-        "400096",
-        "400097",
-        "400098",
-        "400099",
-        "400101",
-        "400102",
-        "400103",
-        "400104",
-      ]);
+      const result = await apiJson(
+        `${API}/serviceability/check?pincode=${encodeURIComponent(form.pincode)}`,
+      );
 
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      setForm((prev) => ({
+        ...prev,
+        city: String(result?.district || ""),
+        state: String(result?.state || ""),
+      }));
 
-      const isServiceable = supportedPincodes.has(form.pincode);
-
-      if (isServiceable) {
-        setForm((prev) => ({
-          ...prev,
-          city: "Mumbai",
-          state: "Maharashtra",
-        }));
+      if (result?.serviceable === true) {
         setPincodeStatus("serviceable");
       } else {
-        setForm((prev) => ({
-          ...prev,
-          city: "",
-          state: "",
-        }));
         setPincodeStatus("unserviceable");
       }
+    } catch (e) {
+      setForm((prev) => ({
+        ...prev,
+        city: "",
+        state: "",
+      }));
+
+      setPincodeStatus("idle");
+
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Unable to check pincode serviceability.",
+      );
     } finally {
       setCheckingPincode(false);
     }
   }
+
+  useEffect(() => {
+    if (!showForm || !/^\d{6}$/.test(form.pincode)) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void checkPincode();
+    }, 450);
+
+    return () => window.clearTimeout(timer);
+  }, [form.pincode, showForm]);
 
   function resetAddressForm() {
     setForm(emptyForm);
@@ -387,7 +311,7 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
       state: address.state,
       type: address.type,
     });
-    setPincodeStatus("serviceable");
+    setPincodeStatus(address.serviceable ? "serviceable" : "unserviceable");
     setShowForm(true);
     window.setTimeout(() => {
       document.getElementById("pickup-address-form")?.scrollIntoView({
@@ -411,7 +335,6 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
 
       const payload = {
         ...form,
-        phone: verifiedPhone,
       };
 
       const saved = editingAddressId
@@ -448,7 +371,6 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
     try {
       await apiJson(`${API}/orders/customer-addresses/${id}`, {
         method: "DELETE",
-        body: JSON.stringify({ phone: verifiedPhone }),
       });
 
       setAddresses((current) => current.filter((address) => address.id !== id));
@@ -468,6 +390,11 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
   function confirmAddress() {
     if (!selectedAddress) {
       setError("Please select a pickup address.");
+      return;
+    }
+
+    if (!selectedAddress.serviceable) {
+      setError("Pickup is currently unavailable for the selected pincode.");
       return;
     }
 
@@ -508,14 +435,19 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
       return;
     }
 
+    if (!selectedAddress.serviceable) {
+      setError("Pickup is currently unavailable for the selected pincode.");
+      return;
+    }
+
     if (payoutMethod === "UPI" && !/^[6-9]\d{9}$/.test(upiMobile)) {
       setError("Enter a valid 10-digit mobile number for UPI payout.");
       return;
     }
 
-    if (!quote) {
+    if (!quote?.enquirySessionId) {
       setError(
-        "Quote details are missing. Please go back to the device evaluation and calculate the exact value again.",
+        "Verified quote session is missing. Please go back to the device evaluation and calculate the exact value again.",
       );
       return;
     }
@@ -526,13 +458,12 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
       const order = await apiJson(`${API}/orders`, {
         method: "POST",
         body: JSON.stringify({
-          phone: verifiedPhone,
+          enquirySessionId: quote.enquirySessionId,
           addressId: selectedAddress.id,
           pickupDate: selectedDate,
           pickupSlotCode: selectedSlotCode,
           payoutMethod,
           payoutUpiMobile: payoutMethod === "UPI" ? upiMobile : null,
-          quote,
         }),
       });
 
@@ -588,6 +519,7 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
                               name="pickup-address"
                               value={address.id}
                               checked={selected}
+                              disabled={!address.serviceable}
                               onChange={() => {
                                 setSelectedAddressId(address.id);
                                 setAddressConfirmed(false);
@@ -598,7 +530,9 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
                             <div className={styles.addressContent}>
                               <div className={styles.addressHeading}>
                                 <span className={styles.addressType}>{address.type}</span>
-                                <span className={styles.serviceable}>Pickup Available</span>
+                                {address.serviceable && (
+                                  <span className={styles.serviceable}>Pickup Available</span>
+                                )}
                               </div>
 
                               <strong>{address.fullName}</strong>
@@ -758,13 +692,16 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
                               onClick={checkPincode}
                               disabled={form.pincode.length !== 6 || checkingPincode}
                             >
-                              {checkingPincode ? "Checking..." : "Check"}
+                              {checkingPincode ? "Checking..." : "Recheck"}
                             </button>
                           </div>
 
                           {pincodeStatus === "serviceable" && (
                             <p className={styles.successMessage}>
-                              ✓ Pickup available at this location
+                              ✓ Pickup available
+                              {form.city && form.state
+                                ? ` · ${form.city}, ${form.state}`
+                                : ""}
                             </p>
                           )}
 
@@ -776,12 +713,13 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
                         </div>
 
                         <div className={styles.field}>
-                          <label htmlFor="city">City</label>
+                          <label htmlFor="city">District</label>
                           <input
                             id="city"
-                            value={form.city}
+                            required
                             readOnly
-                            placeholder="Auto detected"
+                            value={form.city}
+                            placeholder="Auto-filled from pincode"
                           />
                         </div>
 
@@ -789,9 +727,10 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
                           <label htmlFor="state">State</label>
                           <input
                             id="state"
-                            value={form.state}
+                            required
                             readOnly
-                            placeholder="Auto detected"
+                            value={form.state}
+                            placeholder="Auto-filled from pincode"
                           />
                         </div>
                       </div>
@@ -842,7 +781,7 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
                     <button
                       type="button"
                       className={styles.primaryButton}
-                      disabled={!selectedAddress}
+                      disabled={!selectedAddress || !selectedAddress.serviceable}
                       onClick={confirmAddress}
                     >
                       Continue

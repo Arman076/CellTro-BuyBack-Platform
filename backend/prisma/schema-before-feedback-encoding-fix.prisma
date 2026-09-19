@@ -1,4 +1,4 @@
-generator client {
+﻿generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
 }
@@ -903,10 +903,6 @@ model CustomerVerifiedSession {
 model ServiceablePincode {
   id        Int      @id @default(autoincrement())
   pincode   String   @unique
-
-  district  String?
-  state     String?
-
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
