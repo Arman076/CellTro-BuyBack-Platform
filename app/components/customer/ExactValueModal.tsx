@@ -17,117 +17,6 @@ import styles from "./ExactValueModal.module.css";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
-const CUSTOMER_SESSION_TOKEN_KEY =
-  "celltroCustomerSessionToken";
-
-const CUSTOMER_SESSION_EXPIRES_KEY =
-  "celltroCustomerSessionExpiresAt";
-
-const VERIFIED_CUSTOMER_PHONE_KEY =
-  "celltroVerifiedCustomerPhone";
-
-function getStoredCustomerSession() {
-  if (
-    typeof window ===
-    "undefined"
-  ) {
-    return {
-      token: "",
-      phone: "",
-      expiresAt: "",
-      active: false,
-    };
-  }
-
-  const token =
-    localStorage.getItem(
-      CUSTOMER_SESSION_TOKEN_KEY,
-    ) || "";
-
-  const expiresAt =
-    localStorage.getItem(
-      CUSTOMER_SESSION_EXPIRES_KEY,
-    ) || "";
-
-  const phone =
-    localStorage.getItem(
-      VERIFIED_CUSTOMER_PHONE_KEY,
-    ) || "";
-
-  const active =
-    Boolean(
-      expiresAt &&
-      /^[6-9]\d{9}$/.test(
-        phone,
-      ) &&
-      new Date(
-        expiresAt,
-      ).getTime() >
-        Date.now(),
-    );
-
-  if (!active) {
-    localStorage.removeItem(
-      CUSTOMER_SESSION_TOKEN_KEY,
-    );
-
-    localStorage.removeItem(
-      CUSTOMER_SESSION_EXPIRES_KEY,
-    );
-
-    localStorage.removeItem(
-      VERIFIED_CUSTOMER_PHONE_KEY,
-    );
-
-    return {
-      token: "",
-      phone: "",
-      expiresAt: "",
-      active: false,
-    };
-  }
-
-  return {
-    token,
-    phone,
-    expiresAt,
-    active: true,
-  };
-}
-
-function storeCustomerSession(
-  token: string,
-  expiresAt: string,
-  phone: string,
-) {
-  /*
-   * Production authentication is the HttpOnly cookie.
-   * A raw token may exist only in local development for
-   * temporary backward compatibility.
-   */
-  if (token) {
-    localStorage.setItem(
-      CUSTOMER_SESSION_TOKEN_KEY,
-      token,
-    );
-  } else {
-    localStorage.removeItem(
-      CUSTOMER_SESSION_TOKEN_KEY,
-    );
-  }
-
-  localStorage.setItem(
-    CUSTOMER_SESSION_EXPIRES_KEY,
-    expiresAt,
-  );
-
-  localStorage.setItem(
-    VERIFIED_CUSTOMER_PHONE_KEY,
-    phone,
-  );
-}
-
-
 type ChildOption = {
   id: number;
   label: string;
@@ -202,7 +91,6 @@ type Props = {
 async function apiJson(url: string, init?: RequestInit) {
   const response = await fetch(url, {
     ...init,
-    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers || {}),
@@ -805,14 +693,7 @@ export default function ExactValueModal({
         setQuestionIndex(0);
         setAnswers({});
         setStep("QUESTIONS");
-
-        const storedSession =
-          getStoredCustomerSession();
-
-        setPhone(
-          storedSession.phone,
-        );
-
+        setPhone("");
         setOtp("");
         setSessionId(null);
         setQuote(null);
@@ -885,16 +766,27 @@ export default function ExactValueModal({
     onClose();
   }
 
-  function selectMainOption(option: MainOption) {
-    if (!currentQuestion) return;
-
+  function selectMainOption(
+    question: EffectiveQuestion,
+    index: number,
+    option: MainOption,
+  ) {
     setError("");
 
-    if (currentQuestion.answerType === "MULTI_SELECT") {
+    // Make the question being edited the active question.
+    // This is important when the customer goes back and changes
+    // a previously answered question.
+    setQuestionIndex(index);
+
+    if (question.answerType === "MULTI_SELECT") {
+      setStep("QUESTIONS");
+
       setAnswers((current) => {
-        const existing = current[currentQuestion.id];
+        const existing = current[question.id];
+
         const currentIds = new Set<number>(
-          existing?.optionIds ?? (existing?.optionId ? [existing.optionId] : []),
+          existing?.optionIds ??
+            (existing?.optionId ? [existing.optionId] : []),
         );
 
         if (currentIds.has(option.id)) {
@@ -905,29 +797,40 @@ export default function ExactValueModal({
 
         return {
           ...current,
-          [currentQuestion.id]: {
-            itemId: currentQuestion.id,
+          [question.id]: {
+            itemId: question.id,
             optionIds: [...currentIds],
-            childOptionIds: [],
+            childOptionIds: existing?.childOptionIds ?? [],
           },
         };
       });
+
       return;
     }
 
-    setAnswers((current) => ({
-      ...current,
-      [currentQuestion.id]: {
-        itemId: currentQuestion.id,
-        optionId: option.id,
-        optionIds: [option.id],
-        childOptionIds: [],
-      },
-    }));
+    setAnswers((current) => {
+      const previousAnswer = current[question.id];
 
-    // IMPORTANT:
-    // This is the same trigger that worked in the original questionnaire.
-    // If admin configured child issues under this answer, open ISSUES step.
+      // If the customer clicked the same main answer again, preserve its
+      // already-selected child issues so they can edit them instead of
+      // losing everything. If they switch Yes -> No (or another option),
+      // old child issues are cleared automatically.
+      const keepExistingChildren =
+        previousAnswer?.optionId === option.id
+          ? previousAnswer.childOptionIds ?? []
+          : [];
+
+      return {
+        ...current,
+        [question.id]: {
+          itemId: question.id,
+          optionId: option.id,
+          optionIds: [option.id],
+          childOptionIds: keepExistingChildren,
+        },
+      };
+    });
+
     const hasDetails =
       option.showChildOptions &&
       ((option.issueGroups?.some(
@@ -936,14 +839,18 @@ export default function ExactValueModal({
         option.childOptions.length > 0);
 
     if (hasDetails) {
+      // Previous/current question can reopen its configured issue dialog.
       setStep("ISSUES");
       return;
     }
 
-    // No dependent child options -> activate next main question automatically.
+    setStep("QUESTIONS");
+
+    // After changing a normal YES/NO or single-select answer,
+    // continue naturally to the next question.
     window.setTimeout(() => {
-      if (questionIndex < questions.length - 1) {
-        setQuestionIndex((current) => current + 1);
+      if (index < questions.length - 1) {
+        setQuestionIndex(index + 1);
         setStep("QUESTIONS");
         return;
       }
@@ -1050,213 +957,33 @@ export default function ExactValueModal({
     }
   }
 
-  async function requestQuoteOrOtp(
-    normalizedPhone: string,
-  ) {
-    const storedSession =
-      getStoredCustomerSession();
-
-    const response =
-      await apiJson(
-        `${API}/questionnaire/quote/send-otp`,
-        {
-          method: "POST",
-
-          body: JSON.stringify({
-            productId,
-            variantId,
-
-            phone:
-              normalizedPhone,
-
-            /*
-             * This is the important part:
-             * backend can now recognise the 24-hour
-             * verified customer session.
-             *
-             * Product 2 / Product 3:
-             *   otpRequired = false
-             *
-             * Product 4:
-             *   otpRequired = true
-             */
-            customerSessionToken:
-              storedSession.token,
-
-            answers:
-              Object.values(
-                answers,
-              ),
-          }),
-        },
-      );
-
-    if (
-      response?.existingOrder
-    ) {
-      setSessionId(null);
-      setOtp("");
-      setQuote(null);
-      setDevOtp(null);
-
-      setError(
-        `You already have an active order ${response.orderNumber}. Please track the existing order instead.`,
-      );
-
-      return;
-    }
-
-    if (
-      !response?.sessionId
-    ) {
-      throw new Error(
-        "Quote session could not be created.",
-      );
-    }
-
-    setPhone(
-      normalizedPhone,
-    );
-
-    setSessionId(
-      String(
-        response.sessionId,
-      ),
-    );
-
-    /*
-     * Valid 24-hour session and still inside
-     * the 3-distinct-device allowance.
-     *
-     * No OTP screen.
-     */
-    if (
-      response?.otpRequired ===
-      false
-    ) {
-      setDevOtp(null);
-      setOtp("");
-
-      setQuote({
-        basePrice:
-          Number(
-            response.basePrice,
-          ),
-
-        totalDeduction:
-          Number(
-            response.totalDeduction,
-          ),
-
-        finalPrice:
-          Number(
-            response.finalPrice,
-          ),
-      });
-
-      setStep("RESULT");
-
-      return;
-    }
-
-    /*
-     * First ever quote OR 4th distinct device.
-     * Backend has sent a fresh OTP.
-     */
-    setDevOtp(
-      response.devOtp ?? null,
-    );
-
-    setOtp("");
-    setStep("OTP");
-  }
-
-  async function beginBestPrice() {
-    setError("");
-
-    const storedSession =
-      getStoredCustomerSession();
-
-    const verifiedPhone =
-      storedSession.phone
-        .replace(
-          /\D/g,
-          "",
-        );
-
-    /*
-     * Customer already completed OTP earlier and the
-     * 24-hour session is still valid.
-     *
-     * Skip the phone screen as well.
-     * Backend decides whether this is device #2/#3
-     * (no OTP) or device #4 (fresh OTP required).
-     */
-    if (
-      storedSession.active &&
-      /^[6-9]\d{9}$/.test(
-        verifiedPhone,
-      )
-    ) {
-      try {
-        setLoading(true);
-
-        await requestQuoteOrOtp(
-          verifiedPhone,
-        );
-      } catch (e) {
-        setError(
-          e instanceof Error
-            ? e.message
-            : "Unable to calculate quote",
-        );
-      } finally {
-        setLoading(false);
-      }
-
-      return;
-    }
-
-    /*
-     * First visit / expired 24-hour session.
-     * Ask mobile number, then OTP.
-     */
-    setStep("PHONE");
-  }
-
   async function sendOtp() {
     setError("");
+    const normalized = phone.replace(/\D/g, "");
 
-    const normalized =
-      phone.replace(
-        /\D/g,
-        "",
-      );
-
-    if (
-      !/^[6-9]\d{9}$/.test(
-        normalized,
-      )
-    ) {
-      setError(
-        "Enter a valid 10-digit Indian mobile number.",
-      );
-
+    if (!/^[6-9]\d{9}$/.test(normalized)) {
+      setError("Enter a valid 10-digit Indian mobile number.");
       return;
     }
 
     try {
       setLoading(true);
 
-      await requestQuoteOrOtp(
-        normalized,
-      );
+      const response = await apiJson(`${API}/questionnaire/quote/send-otp`, {
+        method: "POST",
+        body: JSON.stringify({
+          productId,
+          variantId,
+          phone: normalized,
+          answers: Object.values(answers),
+        }),
+      });
+
+      setSessionId(response.sessionId);
+      setDevOtp(response.devOtp ?? null);
+      setStep("OTP");
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : "Unable to send OTP",
-      );
+      setError(e instanceof Error ? e.message : "Unable to send OTP");
     } finally {
       setLoading(false);
     }
@@ -1277,40 +1004,9 @@ export default function ExactValueModal({
         `${API}/questionnaire/quote/verify-otp`,
         {
           method: "POST",
-          body: JSON.stringify({
-            sessionId,
-            otp,
-
-            customerSessionToken:
-              getStoredCustomerSession()
-                .token,
-          }),
+          body: JSON.stringify({ sessionId, otp }),
         },
       );
-
-      const normalizedPhone =
-        phone.replace(
-          /\D/g,
-          "",
-        );
-
-      if (
-        response
-          ?.customerSessionExpiresAt
-      ) {
-        storeCustomerSession(
-          String(
-            response?.customerSessionToken ||
-              "",
-          ),
-
-          String(
-            response.customerSessionExpiresAt,
-          ),
-
-          normalizedPhone,
-        );
-      }
 
       setQuote({
         basePrice: Number(response.basePrice),
@@ -1336,40 +1032,18 @@ export default function ExactValueModal({
 
     // Keep the already verified customer + quote available for the pickup flow.
     // No second OTP is required on the address page.
-    if (!sessionId) {
-      setError(
-        "Verified quote session is missing. Please verify OTP again.",
-      );
-      return;
-    }
-
-    sessionStorage.setItem(
-      "verifiedCustomerPhone",
-      normalizedPhone,
-    );
-
+    sessionStorage.setItem("verifiedCustomerPhone", normalizedPhone);
     sessionStorage.setItem(
       "sellQuote",
       JSON.stringify({
-        // Backend uses this to link the exact quote journey
-        // to the SellOrder atomically.
-        enquirySessionId:
-          sessionId,
-
         productId,
         productName,
         productImage,
         variantId,
         variantLabel,
-
-        basePrice:
-          quote.basePrice,
-
-        totalDeduction:
-          quote.totalDeduction,
-
-        finalPrice:
-          quote.finalPrice,
+        basePrice: quote.basePrice,
+        totalDeduction: quote.totalDeduction,
+        finalPrice: quote.finalPrice,
       }),
     );
 
@@ -1512,11 +1186,13 @@ export default function ExactValueModal({
                           <button
                             key={option.id}
                             type="button"
-                            disabled={!isCurrent}
+                            disabled={isFuture}
                             className={`${styles["question-option"]} ${
                               selected ? styles.active : ""
                             }`}
-                            onClick={() => selectMainOption(option)}
+                            onClick={() =>
+                              selectMainOption(question, index, option)
+                            }
                           >
                             {selected && (
                               <CheckCircle2
@@ -1552,13 +1228,11 @@ export default function ExactValueModal({
                   type="button"
                   className={styles["best-price-button"]}
                   onClick={() => {
-                    void beginBestPrice();
+                    setError("");
+                    setStep("PHONE");
                   }}
-                  disabled={loading}
                 >
-                  {loading
-                    ? "Checking..."
-                    : "Get Best Price"}
+                  Get Best Price
                 </button>
               </div>
             )}

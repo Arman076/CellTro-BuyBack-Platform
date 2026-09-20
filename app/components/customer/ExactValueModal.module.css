@@ -2053,3 +2053,21 @@
     grid-template-columns: 1fr !important;
   }
 }
+
+/* =========================================================
+   V4.9 - PREVIOUS ANSWERS ARE EDITABLE
+   ========================================================= */
+
+.question-card-complete .question-option:not(:disabled) {
+  cursor: pointer;
+}
+
+.question-card-complete .question-option:not(:disabled):hover {
+  border-color: #52cbb7;
+  background: #f6fffc;
+}
+
+/* Future questions stay locked until the flow reaches them. */
+.question-card-future .question-option:disabled {
+  cursor: not-allowed;
+}

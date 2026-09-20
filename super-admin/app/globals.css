@@ -85,3 +85,30 @@ img {
   background: #dbeafe;
   color: #1e40af;
 }
+
+.superAdminMain {
+  min-height: 100vh;
+  margin-left: 250px;
+
+  background:
+    linear-gradient(
+      180deg,
+      #f7faff 0%,
+      #f4f7fb 100%
+    );
+}
+
+@media (max-width: 1100px) {
+  .superAdminMain {
+    margin-left: 78px;
+  }
+}
+
+@media (max-width: 700px) {
+  .superAdminMain {
+    margin-left: 0;
+    padding-bottom: 74px;
+  }
+}
+
+

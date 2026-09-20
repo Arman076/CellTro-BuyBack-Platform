@@ -3,17 +3,17 @@ import type {
 } from "next";
 
 import SuperAdminShell from "@/components/layout/SuperAdminShell";
-import OrdersClient from "@/components/orders/OrdersClient";
+import CustomersClient from "@/components/customers/CustomersClient";
 
 export const metadata: Metadata = {
   title:
-    "Orders | Celltro Super Admin",
+    "Customers | Celltro Super Admin",
 };
 
-export default function OrdersPage() {
+export default function CustomersPage() {
   return (
     <SuperAdminShell>
-      <OrdersClient />
+      <CustomersClient />
     </SuperAdminShell>
   );
 }
