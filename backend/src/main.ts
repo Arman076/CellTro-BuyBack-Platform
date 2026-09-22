@@ -1,10 +1,24 @@
-import { ValidationPipe } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
-import { NestExpressApplication } from '@nestjs/platform-express';
+import {
+  ValidationPipe,
+} from '@nestjs/common';
 
-import { join } from 'path';
+import {
+  NestFactory,
+} from '@nestjs/core';
 
-import { AppModule } from './app.module.js';
+import {
+  NestExpressApplication,
+} from '@nestjs/platform-express';
+
+import cookieParser from 'cookie-parser';
+
+import {
+  join,
+} from 'path';
+
+import {
+  AppModule,
+} from './app.module.js';
 
 async function bootstrap() {
   const app =
@@ -12,12 +26,37 @@ async function bootstrap() {
       AppModule,
     );
 
+  /*
+   * Cookie parser must be registered
+   * before requests reach controllers.
+   */
+  app.use(
+    cookieParser(),
+  );
+
   app.enableCors({
     origin: [
       'http://localhost:3000',
       'http://localhost:3001',
+      'http://localhost:3002',
+      'http://localhost:3003',
     ],
+
     credentials: true,
+
+    methods: [
+      'GET',
+      'POST',
+      'PUT',
+      'PATCH',
+      'DELETE',
+      'OPTIONS',
+    ],
+
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+    ],
   });
 
   app.useGlobalPipes(
@@ -28,13 +67,23 @@ async function bootstrap() {
   );
 
   app.useStaticAssets(
-    join(process.cwd(), 'uploads'),
+    join(
+      process.cwd(),
+      'uploads',
+    ),
     {
-      prefix: '/uploads/',
+      prefix:
+        '/uploads/',
     },
   );
 
-  await app.listen(4000);
+  await app.listen(
+    4000,
+  );
+
+  console.log(
+    'Backend running on http://localhost:4000',
+  );
 }
 
-bootstrap();
+void bootstrap();

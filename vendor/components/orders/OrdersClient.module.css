@@ -1,0 +1,497 @@
+.page {
+  width: 100%;
+}
+
+.heading {
+  margin-bottom: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 5px;
+  color: #059669;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.heading h1 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 30px;
+  letter-spacing: -0.9px;
+}
+
+.subtitle {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.summaryGrid {
+  margin-bottom: 16px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summaryCard {
+  min-height: 88px;
+  padding: 15px 16px;
+  border: 1px solid #e7ebf0;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.025);
+}
+
+.summaryIcon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+}
+
+.totalIcon {
+  color: #2563eb;
+  background: #eff6ff;
+}
+
+.pendingIcon {
+  color: #d97706;
+  background: #fff7ed;
+}
+
+.completedIcon {
+  color: #059669;
+  background: #ecfdf5;
+}
+
+.summaryCard span,
+.summaryCard strong {
+  display: block;
+}
+
+.summaryCard span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.summaryCard strong {
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.toolbar {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #e7ebf0;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #ffffff;
+}
+
+.searchBox {
+  width: min(480px, 100%);
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
+.searchBox:focus-within {
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.08);
+}
+
+.searchBox input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: #0f172a;
+  background: transparent;
+  font-family: inherit;
+}
+
+.searchBox input::placeholder {
+  color: #94a3b8;
+}
+
+.toolbarActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filterButton {
+  height: 42px;
+  padding: 0 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: #475569;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.filterButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.tabs {
+  margin-bottom: 14px;
+  padding: 5px;
+  border: 1px solid #e7ebf0;
+  border-radius: 11px;
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  background: #ffffff;
+}
+
+.tabs button {
+  min-height: 36px;
+  padding: 0 14px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+  color: #64748b;
+  background: transparent;
+  white-space: nowrap;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tabs button:hover {
+  color: #047857;
+  background: #f8fffc;
+}
+
+.tabs .activeTab {
+  color: #047857;
+  background: #ecfdf5;
+}
+
+.desktopTable {
+  width: 100%;
+  border: 1px solid #e7ebf0;
+  border-radius: 12px;
+  overflow-x: auto;
+  background: #ffffff;
+  box-shadow: 0 5px 20px rgba(15, 23, 42, 0.025);
+}
+
+.desktopTable table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.desktopTable th,
+.desktopTable td {
+  padding: 15px 17px;
+  border-bottom: 1px solid #edf0f4;
+  text-align: left;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.desktopTable th {
+  color: #64748b;
+  background: #f8fafc;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.desktopTable td {
+  color: #334155;
+}
+
+.desktopTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.desktopTable tbody tr:hover {
+  background: #fbfdfc;
+}
+
+.orderNumber {
+  color: #0f766e;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.status {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.allocated {
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.picked,
+.inspection {
+  color: #0369a1;
+  background: #f0f9ff;
+}
+
+.pending {
+  color: #b45309;
+  background: #fff7ed;
+}
+
+.completed {
+  color: #047857;
+  background: #ecfdf5;
+}
+
+.cancelled {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.viewButton,
+.mobileView {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #059669;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.emptyState {
+  min-height: 310px;
+  padding: 38px 20px;
+  border: 1px solid #e7ebf0;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  text-align: center;
+}
+
+.emptyIcon {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 14px;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  color: #059669;
+  background: #ecfdf5;
+}
+
+.emptyState h2 {
+  margin: 0;
+  color: #334155;
+  font-size: 15px;
+}
+
+.emptyState p {
+  max-width: 440px;
+  margin: 7px 0 0;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.mobileList {
+  display: none;
+}
+
+/* Tablet */
+
+@media (max-width: 1050px) {
+  .toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .searchBox {
+    width: 100%;
+  }
+
+  .toolbarActions {
+    justify-content: flex-end;
+  }
+}
+
+/* Mobile / small tablet */
+
+@media (max-width: 700px) {
+  .heading {
+    margin-bottom: 16px;
+  }
+
+  .heading h1 {
+    font-size: 26px;
+  }
+
+  .subtitle {
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .summaryGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+  }
+
+  .summaryCard {
+    min-height: 78px;
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .summaryCard:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .summaryIcon {
+    width: 38px;
+    height: 38px;
+    flex-basis: 38px;
+  }
+
+  .summaryCard span {
+    font-size: 9px;
+  }
+
+  .summaryCard strong {
+    font-size: 19px;
+  }
+
+  .toolbar {
+    padding: 9px;
+  }
+
+  .toolbarActions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .filterButton {
+    width: 44px;
+    flex: 0 0 44px;
+    padding: 0;
+  }
+
+  .filterButton span {
+    display: none;
+  }
+
+  .desktopTable {
+    display: none;
+  }
+
+  .mobileList {
+    display: grid;
+    gap: 10px;
+  }
+
+  .orderCard {
+    padding: 15px;
+    border: 1px solid #e7ebf0;
+    border-radius: 12px;
+    background: #ffffff;
+  }
+
+  .cardHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .cardHeader > strong {
+    color: #0f766e;
+    font-size: 11px;
+  }
+
+  .orderCard h2 {
+    margin: 15px 0 4px;
+    color: #0f172a;
+    font-size: 15px;
+  }
+
+  .orderCard > p {
+    margin: 0;
+    color: #64748b;
+    font-size: 11px;
+  }
+
+  .cardMeta {
+    margin: 14px 0;
+    padding: 10px 11px;
+    border-radius: 8px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    background: #f8fafc;
+  }
+
+  .cardMeta span {
+    color: #94a3b8;
+    font-size: 10px;
+  }
+
+  .cardMeta strong {
+    color: #475569;
+    font-size: 10px;
+    text-align: right;
+  }
+
+  .mobileView {
+    justify-content: flex-end;
+    font-size: 11px;
+  }
+}
+
+/* Very small phones */
+
+@media (max-width: 420px) {
+  .summaryGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .summaryCard:last-child {
+    grid-column: auto;
+  }
+
+  .tabs {
+    margin-right: -2px;
+    margin-left: -2px;
+  }
+}

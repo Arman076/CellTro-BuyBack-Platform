@@ -24,6 +24,9 @@ import {
   SuperAdminModule,
 } from './super-admin/super-admin.module.js';
 import { FlowConfigModule } from "./flow-config/flow-config.module.js";
+import { VendorApplicationsModule } from './vendor-applications/vendor-applications.module.js';
+import { VendorAuthModule } from './vendor-auth/vendor-auth.module.js';
+
 @Module({
   imports: [
     PrismaModule,
@@ -45,6 +48,8 @@ import { FlowConfigModule } from "./flow-config/flow-config.module.js";
     ServiceabilityModule,
     SuperAdminModule,
     FlowConfigModule,
+    VendorApplicationsModule,
+    VendorAuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

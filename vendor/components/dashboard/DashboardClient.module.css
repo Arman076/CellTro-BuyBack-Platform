@@ -1,0 +1,393 @@
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.hero {
+  position: relative;
+
+  display: flex;
+  min-height: 220px;
+
+  align-items: center;
+  justify-content: space-between;
+  gap: 30px;
+
+  padding: 38px;
+
+  overflow: hidden;
+
+  border-radius: 25px;
+
+  background:
+    radial-gradient(
+      circle at 85% 15%,
+      rgba(
+        81,
+        132,
+        255,
+        0.28
+      ),
+      transparent 32%
+    ),
+    linear-gradient(
+      135deg,
+      #07111f,
+      #10233e
+    );
+
+  color: #ffffff;
+}
+
+.hero::after {
+  content: "";
+
+  position: absolute;
+  right: -80px;
+  bottom: -130px;
+
+  width: 300px;
+  height: 300px;
+
+  border:
+    1px solid
+    rgba(
+      255,
+      255,
+      255,
+      0.08
+    );
+
+  border-radius: 999px;
+}
+
+.eyebrow {
+  display: inline-block;
+
+  margin-bottom: 13px;
+
+  color: #8eafff;
+
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+}
+
+.hero h1 {
+  max-width: 650px;
+
+  margin: 0;
+
+  font-size:
+    clamp(
+      25px,
+      3vw,
+      38px
+    );
+
+  line-height: 1.12;
+}
+
+.hero p {
+  max-width: 580px;
+
+  margin:
+    14px 0 0;
+
+  color: #aab8ca;
+
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.secureBadge {
+  position: relative;
+  z-index: 2;
+
+  display: flex;
+  min-width: 190px;
+
+  align-items: center;
+  gap: 11px;
+
+  padding: 14px 16px;
+
+  border:
+    1px solid
+    rgba(
+      255,
+      255,
+      255,
+      0.1
+    );
+
+  border-radius: 16px;
+
+  background:
+    rgba(
+      255,
+      255,
+      255,
+      0.07
+    );
+
+  backdrop-filter:
+    blur(10px);
+}
+
+.secureBadge svg {
+  color: #66e1ad;
+}
+
+.secureBadge strong {
+  display: block;
+
+  font-size: 12px;
+}
+
+.secureBadge span {
+  display: block;
+
+  margin-top: 3px;
+
+  color: #91a5bc;
+
+  font-size: 10px;
+}
+
+.section {
+  padding-top: 2px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+
+  margin-bottom: 15px;
+}
+
+.sectionHeader h2 {
+  margin: 0;
+
+  font-size: 19px;
+}
+
+.sectionHeader p {
+  margin:
+    5px 0 0;
+
+  color: #87919f;
+
+  font-size: 12px;
+}
+
+.quickGrid {
+  display: grid;
+
+  grid-template-columns:
+    repeat(
+      4,
+      minmax(0, 1fr)
+    );
+
+  gap: 14px;
+}
+
+.quickCard {
+  display: flex;
+  min-width: 0;
+
+  align-items: center;
+  gap: 13px;
+
+  padding: 17px;
+
+  border:
+    1px solid #e7ebf0;
+
+  border-radius: 17px;
+
+  background: #ffffff;
+
+  color: #111827;
+
+  text-decoration: none;
+
+  box-shadow:
+    0 3px 12px
+    rgba(
+      15,
+      23,
+      42,
+      0.025
+    );
+
+  transition:
+    transform
+      160ms ease,
+    box-shadow
+      160ms ease,
+    border-color
+      160ms ease;
+}
+
+.quickCard:hover {
+  transform:
+    translateY(-3px);
+
+  border-color:
+    #ccd5e1;
+
+  box-shadow:
+    0 14px 30px
+    rgba(
+      15,
+      23,
+      42,
+      0.07
+    );
+}
+
+.quickIcon {
+  display: grid;
+
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+
+  place-items: center;
+
+  border-radius: 13px;
+
+  background: #f0f4f9;
+  color: #13233b;
+}
+
+.quickContent {
+  min-width: 0;
+  flex: 1;
+}
+
+.quickContent strong {
+  display: block;
+
+  font-size: 13px;
+}
+
+.quickContent span {
+  display: block;
+
+  margin-top: 4px;
+
+  color: #8a94a3;
+
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.arrow {
+  flex-shrink: 0;
+
+  color: #9ca5b2;
+
+  transition:
+    transform
+    160ms ease;
+}
+
+.quickCard:hover .arrow {
+  transform:
+    translateX(3px);
+}
+
+.activityCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+
+  padding: 22px;
+
+  border:
+    1px solid #e7ebf0;
+
+  border-radius: 18px;
+
+  background: #ffffff;
+}
+
+.activityIcon {
+  display: grid;
+
+  width: 45px;
+  height: 45px;
+  min-width: 45px;
+
+  place-items: center;
+
+  border-radius: 13px;
+
+  background: #f2f5f9;
+  color: #15253c;
+}
+
+.activityCard h3 {
+  margin:
+    2px 0 5px;
+
+  font-size: 14px;
+}
+
+.activityCard p {
+  max-width: 700px;
+
+  margin: 0;
+
+  color: #87919f;
+
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (
+  max-width: 1200px
+) {
+  .quickGrid {
+    grid-template-columns:
+      repeat(
+        2,
+        minmax(0, 1fr)
+      );
+  }
+}
+
+@media (
+  max-width: 700px
+) {
+  .dashboard {
+    gap: 20px;
+  }
+
+  .hero {
+    min-height: auto;
+
+    flex-direction: column;
+    align-items: flex-start;
+
+    padding: 27px 22px;
+  }
+
+  .secureBadge {
+    width: 100%;
+  }
+
+  .quickGrid {
+    grid-template-columns:
+      1fr;
+  }
+
+  .quickCard {
+    padding: 15px;
+  }
+}

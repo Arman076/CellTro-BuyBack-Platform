@@ -1,0 +1,133 @@
+.sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 40;
+  width: 248px;
+  min-height: 100vh;
+  padding: 24px 16px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow-y: auto;
+  color: #f8fafc;
+  background:
+    radial-gradient(circle at 0 0, rgba(16, 185, 129, 0.12), transparent 30%),
+    #0f172a;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 10px 25px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.logoMark {
+  width: 37px;
+  height: 37px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #ffffff;
+  background: linear-gradient(135deg, #10b981, #059669);
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.logoText {
+  font-size: 23px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.7px;
+}
+
+.logoSubtext {
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.navigation {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.navItem {
+  min-height: 45px;
+  padding: 0 13px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #cbd5e1;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.navItem:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.07);
+  transform: translateX(2px);
+}
+
+.active {
+  color: #ffffff;
+  background: linear-gradient(135deg, #10b981, #08a978);
+  box-shadow: 0 8px 24px rgba(16, 185, 129, 0.2);
+}
+
+.support {
+  margin: 0 8px 16px;
+  padding: 14px 5px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #cbd5e1;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.growCard {
+  padding: 15px;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.growCard strong,
+.growCard span {
+  display: block;
+}
+
+.growCard strong {
+  margin-bottom: 5px;
+  font-size: 13px;
+}
+
+.growCard span {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.growCard svg {
+  color: #10b981;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    display: none;
+  }
+}

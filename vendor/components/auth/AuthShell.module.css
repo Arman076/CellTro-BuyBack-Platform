@@ -1,0 +1,155 @@
+.page {
+  min-height: 100vh;
+  padding: 28px;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(
+      circle at top right,
+      #e9f4ff 0,
+      transparent 34%
+    ),
+    #f4f7fb;
+}
+
+.shell {
+  width: min(100%, 1080px);
+  min-height: 690px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr);
+  border: 1px solid #e2e8f0;
+  border-radius: 22px;
+  background: #ffffff;
+  box-shadow:
+    0 24px 70px rgba(15, 23, 42, 0.1);
+}
+
+.brandPanel {
+  padding: 42px 38px 34px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  color: #0f2b5b;
+  background:
+    linear-gradient(
+      160deg,
+      #eef8ff 0%,
+      #f8fbff 55%,
+      #e6f3ff 100%
+    );
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 21px;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+}
+
+.logo span {
+  width: 35px;
+  height: 35px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  background: #1265df;
+}
+
+.kicker {
+  margin: 62px 0 8px;
+  color: #2563eb;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.brandPanel h1 {
+  margin: 0;
+  color: #0b1f4d;
+  font-size: 34px;
+  line-height: 1.1;
+  letter-spacing: -1.4px;
+}
+
+.description {
+  margin: 18px 0 30px;
+  color: #526783;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.brandPanel ul {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 18px;
+  list-style: none;
+}
+
+.brandPanel li {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: #385477;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.brandPanel li svg {
+  color: #1265df;
+}
+
+.tagline {
+  color: #52729c;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.content {
+  min-width: 0;
+  padding: 46px 64px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+@media (max-width: 850px) {
+  .page {
+    padding: 0;
+    display: block;
+    background: #ffffff;
+  }
+
+  .shell {
+    min-height: 100vh;
+    display: block;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .brandPanel {
+    padding: 22px 24px;
+  }
+
+  .brandPanel > div:first-child > :not(.logo) {
+    display: none;
+  }
+
+  .tagline {
+    display: none;
+  }
+
+  .content {
+    padding: 30px 24px 50px;
+  }
+}
+
+@media (max-width: 480px) {
+  .content {
+    padding: 24px 18px 40px;
+  }
+}

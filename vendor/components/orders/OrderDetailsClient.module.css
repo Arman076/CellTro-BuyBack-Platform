@@ -1,0 +1,165 @@
+.page {
+  width: 100%;
+}
+
+.back {
+  margin-bottom: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #64748b;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.back:hover {
+  color: #059669;
+}
+
+.heading {
+  margin-bottom: 22px;
+}
+
+.eyebrow {
+  margin: 0 0 5px !important;
+  color: #059669 !important;
+  font-size: 11px !important;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.heading h1 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 30px;
+  letter-spacing: -0.8px;
+}
+
+.heading p {
+  margin: 7px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.7fr);
+  gap: 18px;
+}
+
+.panel {
+  border: 1px solid #e7ebf0;
+  border-radius: 13px;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 5px 20px rgba(15, 23, 42, 0.03);
+}
+
+.panelHeader {
+  min-height: 65px;
+  padding: 0 18px;
+  border-bottom: 1px solid #edf0f4;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #059669;
+}
+
+.panelHeader h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.empty {
+  min-height: 330px;
+  padding: 35px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.empty strong {
+  color: #334155;
+  font-size: 15px;
+}
+
+.empty p {
+  max-width: 470px;
+  margin: 8px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.timeline {
+  padding: 21px;
+}
+
+.timelineItem {
+  position: relative;
+  min-height: 59px;
+  display: flex;
+  gap: 12px;
+}
+
+.timelineItem:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 19px;
+  left: 8px;
+  width: 1px;
+  height: 35px;
+  background: #e2e8f0;
+}
+
+.completeIcon {
+  z-index: 1;
+  flex: 0 0 auto;
+  color: #10b981;
+  background: #ffffff;
+}
+
+.pendingIcon {
+  z-index: 1;
+  flex: 0 0 auto;
+  color: #cbd5e1;
+  background: #ffffff;
+}
+
+.timelineItem strong,
+.timelineItem span {
+  display: block;
+}
+
+.timelineItem strong {
+  color: #334155;
+  font-size: 12px;
+}
+
+.timelineItem span {
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .heading h1 {
+    font-size: 25px;
+  }
+
+  .empty {
+    min-height: 230px;
+    padding: 25px 18px;
+  }
+}

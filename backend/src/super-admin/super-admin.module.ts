@@ -31,13 +31,32 @@ import {
 import {
   SuperAdminCustomersService,
 } from "./super-admin-customers.service.js";
+import {
+  SuperAdminVendorsController,
+} from "./vendors/super-admin-vendors.controller.js";
+import {
+  SuperAdminVendorsService,
+} from "./vendors/super-admin-vendors.service.js";
 
+import {
+  SuperAdminVendorApplicationsController,
+} from "./vendor-applications/super-admin-vendor-applications.controller.js";
+
+import {
+  SuperAdminVendorApplicationsService,
+} from "./vendor-applications/super-admin-vendor-applications.service.js";
+
+import {
+  VendorEmailService,
+} from "../vendor-security/vendor-email.service.js";
 @Module({
   controllers: [
     SuperAdminDashboardController,
     SuperAdminOrdersController,
     SuperAdminEnquiriesController,
     SuperAdminCustomersController,
+    SuperAdminVendorsController,
+    SuperAdminVendorApplicationsController,
   ],
 
   providers: [
@@ -45,6 +64,9 @@ import {
     SuperAdminOrdersService,
     SuperAdminEnquiriesService,
     SuperAdminCustomersService,
+    SuperAdminVendorsService,
+    SuperAdminVendorApplicationsService,
+    VendorEmailService,
   ],
 })
 export class SuperAdminModule {}

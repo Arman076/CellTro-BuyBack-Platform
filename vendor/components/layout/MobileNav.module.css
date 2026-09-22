@@ -1,0 +1,85 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: rgba(15, 23, 42, 0.52);
+}
+
+.drawer {
+  position: relative;
+  width: min(84vw, 320px);
+  height: 100%;
+  padding: 18px;
+  overflow-y: auto;
+  background: #ffffff;
+  box-shadow: 18px 0 45px rgba(15, 23, 42, 0.15);
+}
+
+.header {
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f172a;
+  text-decoration: none;
+  font-size: 21px;
+}
+
+.logo {
+  width: 31px;
+  height: 31px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  background: #10b981;
+  font-weight: 800;
+}
+
+.close {
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #f1f5f9;
+  cursor: pointer;
+}
+
+.navigation {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.item {
+  min-height: 46px;
+  padding: 0 12px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #475569;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.active {
+  color: #047857;
+  background: #ecfdf5;
+}
