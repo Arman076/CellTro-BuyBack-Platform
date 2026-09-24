@@ -4,7 +4,6 @@ import {
   Get,
   Param,
   Patch,
-  Post,
   Query,
 } from "@nestjs/common";
 
@@ -41,6 +40,59 @@ export class SuperAdminVendorsController {
     });
   }
 
+  @Get(":vendorId/kpis")
+  getKpis(
+    @Param("vendorId")
+    vendorId: string,
+  ) {
+    return this.vendorsService.getKpis(
+      vendorId,
+    );
+  }
+
+  @Get(":vendorId/orders")
+  getOrders(
+    @Param("vendorId")
+    vendorId: string,
+
+    @Query("page")
+    page?: string,
+
+    @Query("limit")
+    limit?: string,
+
+    @Query("status")
+    status?: string,
+
+    @Query("search")
+    search?: string,
+  ) {
+    return this.vendorsService.getOrders(
+      vendorId,
+      {
+        page,
+        limit,
+        status,
+        search,
+      },
+    );
+  }
+
+  @Get(":vendorId/service-areas")
+  getServiceAreas(
+    @Param("vendorId")
+    vendorId: string,
+
+    @Query("search")
+    search?: string,
+  ) {
+    return this.vendorsService
+      .getAvailableServiceAreas(
+        vendorId,
+        search,
+      );
+  }
+
   @Get(":vendorId")
   getById(
     @Param("vendorId")
@@ -48,21 +100,6 @@ export class SuperAdminVendorsController {
   ) {
     return this.vendorsService.getById(
       vendorId,
-    );
-  }
-
-  @Post()
-  create(
-    @Body()
-    body: {
-      businessName?: unknown;
-      contactName?: unknown;
-      phone?: unknown;
-      email?: unknown;
-    },
-  ) {
-    return this.vendorsService.create(
-      body,
     );
   }
 
@@ -98,35 +135,21 @@ export class SuperAdminVendorsController {
       status,
     );
   }
-  @Get(":vendorId/service-areas")
-getServiceAreas(
-  @Param("vendorId")
-  vendorId: string,
 
-  @Query("search")
-  search?: string,
-) {
-  return this.vendorsService
-    .getAvailableServiceAreas(
-      vendorId,
-      search,
-    );
-}
+  @Patch(":vendorId/service-areas")
+  replaceServiceAreas(
+    @Param("vendorId")
+    vendorId: string,
 
-@Patch(":vendorId/service-areas")
-replaceServiceAreas(
-  @Param("vendorId")
-  vendorId: string,
-
-  @Body()
-  body: {
-    areas?: unknown;
-  },
-) {
-  return this.vendorsService
-    .replaceServiceAreas(
-      vendorId,
-      body,
-    );
-}
+    @Body()
+    body: {
+      areas?: unknown;
+    },
+  ) {
+    return this.vendorsService
+      .replaceServiceAreas(
+        vendorId,
+        body,
+      );
+  }
 }

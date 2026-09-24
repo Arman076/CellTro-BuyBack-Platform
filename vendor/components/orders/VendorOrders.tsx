@@ -2,19 +2,24 @@
 
 import {
   CalendarDays,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CircleAlert,
+  ClipboardCheck,
   Clock3,
   Eye,
+  History,
   IndianRupee,
   MapPin,
   PackageSearch,
   RefreshCw,
   Search,
-  SlidersHorizontal,
-  Smartphone,
+  ShieldCheck,
   UserRound,
+  UsersRound,
   X,
+  XCircle,
 } from "lucide-react";
 
 import {
@@ -22,6 +27,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type ReactNode,
 } from "react";
 
 import {
@@ -33,284 +39,317 @@ import {
   getVendorOrder,
   getVendorOrders,
   type DateFilter,
+  type StatusGroup,
   type VendorOrder,
   type VendorOrderDetails,
 } from "../../lib/vendor-orders";
 
 import styles from "./VendorOrders.module.css";
 
+type DetailTab =
+  | "OVERVIEW"
+  | "DEVICE_REPORT"
+  | "AGENT_INSPECTION"
+  | "HISTORY";
+
 const DATE_FILTERS: Array<{
   value: DateFilter;
   label: string;
 }> = [
-  {
-    value: "ALL",
-    label: "All Time",
-  },
-  {
-    value: "TODAY",
-    label: "Today",
-  },
-  {
-    value: "YESTERDAY",
-    label: "Yesterday",
-  },
-  {
-    value: "LAST_7_DAYS",
-    label: "Last 7 Days",
-  },
-  {
-    value: "LAST_30_DAYS",
-    label: "Last 30 Days",
-  },
+  { value: "ALL", label: "All Time" },
+  { value: "TODAY", label: "Today" },
+  { value: "YESTERDAY", label: "Yesterday" },
+  { value: "LAST_7_DAYS", label: "Last 7 Days" },
+  { value: "LAST_30_DAYS", label: "Last 30 Days" },
 ];
 
-function statusClass(
-  status: string,
-) {
-  const value =
-    status.toUpperCase();
+const STATUS_TABS: Array<{
+  value: StatusGroup;
+  label: string;
+}> = [
+  { value: "ALL", label: "All Orders" },
+  { value: "PENDING", label: "Pending" },
+  { value: "IN_PROCESS", label: "In Process" },
+  { value: "COMPLETED", label: "Completed" },
+  { value: "CANCELLED", label: "Cancelled" },
+];
+
+function statusClass(status: string) {
+  const value = String(status ?? "").toUpperCase();
+
+  if (value === "COMPLETED") {
+    return styles.statusSuccess;
+  }
+
+  if (value === "CANCELLED") {
+    return styles.statusDanger;
+  }
 
   if (
-    value.includes("COMPLETED") ||
-    value.includes("DELIVERED") ||
-    value.includes("SUCCESS")
+    value === "INSPECTION_COMPLETED" ||
+    value === "PAYMENT_COMPLETED"
   ) {
     return styles.statusSuccess;
   }
 
   if (
-    value.includes("CANCEL") ||
-    value.includes("REJECT") ||
-    value.includes("FAILED")
-  ) {
-    return styles.statusDanger;
-  }
-
-  if (
-    value.includes("PICKUP") ||
-    value.includes("ASSIGNED")
-  ) {
-    return styles.statusInfo;
-  }
-
-  if (
-    value.includes("PROCESS") ||
-    value.includes("PENDING")
+    value === "PICKUP_STARTED" ||
+    value.includes("AGENT") ||
+    value.includes("INSPECTION")
   ) {
     return styles.statusWarning;
+  }
+
+  if (
+    value === "PICKUP_REQUESTED" ||
+    value === "PICKUP_CONFIRMED"
+  ) {
+    return styles.statusInfo;
   }
 
   return styles.statusNeutral;
 }
 
-function OrderImage({
-  order,
+function combineAddress(
+  address:
+    | VendorOrder["address"]
+    | VendorOrderDetails["address"]
+    | null
+    | undefined,
+) {
+  if (!address) {
+    return "Address not available";
+  }
+
+  const values = [
+    address.house,
+    address.street,
+    address.locality,
+    address.landmark,
+    address.city,
+    address.state,
+    address.pincode,
+  ]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+
+  return values.length
+    ? values.join(", ")
+    : "Address not available";
+}
+
+function DetailCard({
+  icon,
+  label,
+  children,
 }: {
-  order: VendorOrder;
+  icon: ReactNode;
+  label: string;
+  children: ReactNode;
 }) {
-  if (!order.productImage) {
-    return (
-      <div
-        className={
-          styles.imageFallback
-        }
-      >
-        <Smartphone size={22} />
+  return (
+    <div className={styles.detailCard}>
+      <div className={styles.detailCardIcon}>{icon}</div>
+
+      <div className={styles.detailCardContent}>
+        <span className={styles.detailLabel}>{label}</span>
+        <div className={styles.detailValue}>{children}</div>
       </div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span
+      className={`${styles.statusBadge} ${statusClass(status)}`}
+    >
+      {formatStatus(status)}
+    </span>
+  );
+}
+
+function DeviceAnswerState({
+  severity,
+}: {
+  severity?: string | null;
+}) {
+  const value = String(severity ?? "").toUpperCase();
+
+  const unhealthy =
+    value.includes("SEVERE") ||
+    value.includes("CRITICAL") ||
+    value.includes("MAJOR") ||
+    value.includes("HIGH") ||
+    value.includes("FAULT");
+
+  if (unhealthy) {
+    return (
+      <span
+        className={`${styles.reportStateIcon} ${styles.reportStateBad}`}
+        aria-label="Issue reported"
+      >
+        <XCircle size={20} />
+      </span>
     );
   }
 
   return (
-    <img
-      className={
-        styles.productImage
-      }
-      src={order.productImage}
-      alt=""
-      loading="lazy"
-    />
+    <span
+      className={`${styles.reportStateIcon} ${styles.reportStateGood}`}
+      aria-label="Reported condition"
+    >
+      <CheckCircle2 size={20} />
+    </span>
   );
 }
 
 export default function VendorOrders() {
-  const [orders, setOrders] =
-    useState<VendorOrder[]>([]);
+  const [orders, setOrders] = useState<VendorOrder[]>([]);
 
-  const [page, setPage] =
-    useState(1);
+  const [page, setPage] = useState(1);
+  const [limit] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
-  const [limit] =
-    useState(20);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
 
-  const [total, setTotal] =
-    useState(0);
+  const [statusGroup, setStatusGroup] =
+    useState<StatusGroup>("ALL");
 
-  const [
-    totalPages,
-    setTotalPages,
-  ] = useState(1);
-
-  const [
-    searchInput,
-    setSearchInput,
-  ] = useState("");
-
-  const [search, setSearch] =
-    useState("");
-
-  const [status, setStatus] =
-    useState("");
-
-  const [
-    dateFilter,
-    setDateFilter,
-  ] =
+  const [dateFilter, setDateFilter] =
     useState<DateFilter>("ALL");
 
-  const [loading, setLoading] =
-    useState(true);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
 
-  const [error, setError] =
-    useState("");
-
-  const [
-    selectedOrder,
-    setSelectedOrder,
-  ] =
-    useState<VendorOrderDetails | null>(
-      null,
-    );
-
-  const [
-    detailsOrderNumber,
-    setDetailsOrderNumber,
-  ] =
+  const [detailsOrderNumber, setDetailsOrderNumber] =
     useState<string | null>(null);
 
-  const [
-    detailsLoading,
-    setDetailsLoading,
-  ] = useState(false);
+  const [selectedOrder, setSelectedOrder] =
+    useState<VendorOrderDetails | null>(null);
 
-  const [
-    detailsError,
-    setDetailsError,
-  ] = useState("");
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState("");
 
+  const [activeTab, setActiveTab] =
+    useState<DetailTab>("OVERVIEW");
+
+  /*
+   * Search is intentionally debounced.
+   * Avoids API/DB request on every keystroke.
+   */
   useEffect(() => {
-    const timer =
-      window.setTimeout(() => {
-        setPage(1);
+    const timer = window.setTimeout(() => {
+      setPage(1);
+      setSearch(searchInput.trim());
+    }, 400);
 
-        setSearch(
-          searchInput.trim(),
-        );
-      }, 400);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
+    return () => window.clearTimeout(timer);
   }, [searchInput]);
 
-  const loadOrders =
-    useCallback(
-      async () => {
+  const loadOrders = useCallback(
+    async (silent = false) => {
+      if (!silent) {
         setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
+
+      if (!silent) {
         setError("");
+      }
 
-        try {
-          const result =
-            await getVendorOrders({
-              page,
-              limit,
-              search,
-              status,
-              dateFilter,
-            });
+      try {
+        const result = await getVendorOrders({
+          page,
+          limit,
+          search,
+          statusGroup,
+          dateFilter,
+        });
 
-          setOrders(
-            Array.isArray(
-              result.data,
-            )
-              ? result.data
-              : [],
-          );
+        setOrders(
+          Array.isArray(result.data) ? result.data : [],
+        );
 
-          setTotal(
-            Number(
-              result.pagination
-                ?.total ?? 0,
-            ),
-          );
+        setTotal(
+          Number(result.pagination?.total ?? 0),
+        );
 
-          setTotalPages(
-            Math.max(
-              1,
-              Number(
-                result.pagination
-                  ?.totalPages ?? 1,
-              ),
-            ),
-          );
-        } catch (err) {
+        setTotalPages(
+          Math.max(
+            1,
+            Number(result.pagination?.totalPages ?? 1),
+          ),
+        );
+      } catch (err) {
+        if (!silent) {
+          setOrders([]);
+          setTotal(0);
+          setTotalPages(1);
+
           setError(
             err instanceof Error
               ? err.message
               : "Unable to load orders.",
           );
-
-          setOrders([]);
-          setTotal(0);
-          setTotalPages(1);
-        } finally {
+        }
+      } finally {
+        if (!silent) {
           setLoading(false);
         }
-      },
-      [
-        page,
-        limit,
-        search,
-        status,
-        dateFilter,
-      ],
-    );
+
+        setRefreshing(false);
+      }
+    },
+    [
+      page,
+      limit,
+      search,
+      statusGroup,
+      dateFilter,
+    ],
+  );
 
   useEffect(() => {
     void loadOrders();
   }, [loadOrders]);
 
-  const availableStatuses =
-    useMemo(() => {
-      return Array.from(
-        new Set(
-          orders
-            .map(
-              (order) =>
-                order.status,
-            )
-            .filter(Boolean),
-        ),
-      ).sort();
-    }, [orders]);
+  /*
+   * Lightweight refresh only.
+   *
+   * - GET request only
+   * - only when page is visible
+   * - paused while order details are open
+   *
+   * Later this can be replaced by SSE/WebSocket
+   * without changing the order UI structure.
+   */
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (
+        document.visibilityState === "visible" &&
+        !detailsOrderNumber
+      ) {
+        void loadOrders(true);
+      }
+    }, 30000);
 
-  async function openDetails(
-    orderNumber: string,
-  ) {
-    setDetailsOrderNumber(
-      orderNumber,
-    );
+    return () => window.clearInterval(interval);
+  }, [loadOrders, detailsOrderNumber]);
 
+  async function openDetails(orderNumber: string) {
+    setDetailsOrderNumber(orderNumber);
     setSelectedOrder(null);
     setDetailsError("");
     setDetailsLoading(true);
+    setActiveTab("OVERVIEW");
 
     try {
-      const result =
-        await getVendorOrder(
-          orderNumber,
-        );
-
+      const result = await getVendorOrder(orderNumber);
       setSelectedOrder(result);
     } catch (err) {
       setDetailsError(
@@ -327,6 +366,7 @@ export default function VendorOrders() {
     setDetailsOrderNumber(null);
     setSelectedOrder(null);
     setDetailsError("");
+    setActiveTab("OVERVIEW");
   }
 
   useEffect(() => {
@@ -334,1900 +374,1108 @@ export default function VendorOrders() {
       return;
     }
 
-    function onKeyDown(
-      event: KeyboardEvent,
-    ) {
+    function handleEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
         closeDetails();
       }
     }
 
-    document.addEventListener(
-      "keydown",
-      onKeyDown,
-    );
+    document.addEventListener("keydown", handleEscape);
 
-    return () =>
-      document.removeEventListener(
-        "keydown",
-        onKeyDown,
-      );
+    return () => {
+      document.removeEventListener("keydown", handleEscape);
+    };
   }, [detailsOrderNumber]);
 
-  function clearFilters() {
-    setSearchInput("");
-    setSearch("");
-    setStatus("");
-    setDateFilter("ALL");
+  useEffect(() => {
+    if (!detailsOrderNumber) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [detailsOrderNumber]);
+
+  const resultText = useMemo(() => {
+    if (total === 0) {
+      return "No orders";
+    }
+
+    const first = (page - 1) * limit + 1;
+    const last = Math.min(page * limit, total);
+
+    return `${first}-${last} of ${total} orders`;
+  }, [page, limit, total]);
+
+  function changeStatusGroup(value: StatusGroup) {
+    setStatusGroup(value);
+    setPage(1);
+  }
+
+  function changeDateFilter(value: DateFilter) {
+    setDateFilter(value);
     setPage(1);
   }
 
   return (
-    <div className={styles.page}>
-      <section
-        className={styles.header}
-      >
+    <section className={styles.page}>
+      <header className={styles.pageHeader}>
         <div>
-          <div
-            className={styles.eyebrow}
-          >
-            ORDER MANAGEMENT
-          </div>
+          <p className={styles.eyebrow}>Vendor Workspace</p>
 
-          <h1>
-            Assigned Orders
-          </h1>
+          <h1 className={styles.title}>Orders</h1>
 
-          <p>
-            Manage orders currently
-            routed to your vendor
-            account.
+          <p className={styles.subtitle}>
+            Manage assigned pickup orders, customer device
+            reports and agent workflow from one place.
           </p>
         </div>
 
         <button
-          className={
-            styles.refreshButton
-          }
           type="button"
-          onClick={() =>
-            void loadOrders()
-          }
-          disabled={loading}
+          className={styles.refreshButton}
+          onClick={() => void loadOrders(true)}
+          disabled={refreshing}
         >
           <RefreshCw
-            size={17}
-            className={
-              loading
-                ? styles.spinning
-                : ""
-            }
+            size={18}
+            className={refreshing ? styles.spin : undefined}
           />
-
           Refresh
         </button>
-      </section>
+      </header>
 
-      <section
-        className={
-          styles.summaryStrip
-        }
+      {/* MAIN STATUS TABS */}
+
+      <div
+        className={styles.statusTabs}
+        role="tablist"
+        aria-label="Order status"
       >
-        <div>
-          <span>
-            Assigned orders
-          </span>
+        {STATUS_TABS.map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            role="tab"
+            aria-selected={statusGroup === tab.value}
+            className={`${styles.statusTab} ${
+              statusGroup === tab.value
+                ? styles.statusTabActive
+                : ""
+            }`}
+            onClick={() => changeStatusGroup(tab.value)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-          <strong>
-            {loading ? "—" : total}
-          </strong>
-        </div>
+      {/* FILTER BAR */}
 
-        <div>
-          <span>
-            Date range
-          </span>
-
-          <strong>
-            {dateFilterLabel(
-              dateFilter,
-            )}
-          </strong>
-        </div>
-
-        <div>
-          <span>Showing</span>
-
-          <strong>
-            {loading
-              ? "—"
-              : orders.length}
-          </strong>
-        </div>
-      </section>
-
-      <section
-        className={styles.toolbar}
-      >
-        <div
-          className={
-            styles.searchBox
-          }
-        >
-          <Search size={18} />
+      <div className={styles.toolbar}>
+        <div className={styles.searchBox}>
+          <Search size={20} />
 
           <input
+            type="search"
             value={searchInput}
+            placeholder="Search order, device, customer, mobile, city or pincode"
             onChange={(event) =>
-              setSearchInput(
-                event.target.value,
-              )
+              setSearchInput(event.target.value)
             }
-            placeholder="Search order, customer, device, pincode..."
             aria-label="Search orders"
           />
 
-          {searchInput && (
+          {searchInput ? (
             <button
               type="button"
-              onClick={() =>
-                setSearchInput("")
-              }
+              className={styles.clearSearch}
               aria-label="Clear search"
+              onClick={() => setSearchInput("")}
             >
-              <X size={16} />
+              <X size={17} />
             </button>
-          )}
+          ) : null}
         </div>
 
-        <div
-          className={
-            styles.filterBox
-          }
-        >
-          <CalendarDays
-            size={17}
-          />
+        <div className={styles.filterBox}>
+          <CalendarDays size={18} />
 
           <select
             value={dateFilter}
-            onChange={(event) => {
-              setDateFilter(
-                event.target
-                  .value as DateFilter,
-              );
-
-              setPage(1);
-            }}
+            onChange={(event) =>
+              changeDateFilter(
+                event.target.value as DateFilter,
+              )
+            }
             aria-label="Filter by assignment date"
           >
-            {DATE_FILTERS.map(
-              (filter) => (
-                <option
-                  key={
-                    filter.value
-                  }
-                  value={
-                    filter.value
-                  }
-                >
-                  {filter.label}
-                </option>
-              ),
-            )}
+            {DATE_FILTERS.map((filter) => (
+              <option
+                key={filter.value}
+                value={filter.value}
+              >
+                {filter.label}
+              </option>
+            ))}
           </select>
         </div>
+      </div>
 
-        <div
-          className={
-            styles.filterBox
-          }
-        >
-          <SlidersHorizontal
-            size={17}
-          />
+      <div className={styles.resultBar}>
+        <span>{resultText}</span>
 
-          <select
-            value={status}
-            onChange={(event) => {
-              setStatus(
-                event.target.value,
-              );
+        <span>
+          {dateFilterLabel(dateFilter)}
+          {statusGroup !== "ALL"
+            ? ` • ${
+                STATUS_TABS.find(
+                  (tab) => tab.value === statusGroup,
+                )?.label ?? ""
+              }`
+            : ""}
+        </span>
+      </div>
 
-              setPage(1);
-            }}
-            aria-label="Filter by status"
-          >
-            <option value="">
-              All statuses
-            </option>
+      {/* ERROR */}
 
-            {availableStatuses.map(
-              (item) => (
-                <option
-                  value={item}
-                  key={item}
-                >
-                  {formatStatus(
-                    item,
-                  )}
-                </option>
-              ),
-            )}
-          </select>
-        </div>
-      </section>
+      {error ? (
+        <div className={styles.errorState}>
+          <CircleAlert size={28} />
 
-      {error && (
-        <section
-          className={
-            styles.errorState
-          }
-        >
           <div>
-            <strong>
-              Couldn&apos;t load
-              orders
-            </strong>
-
+            <strong>Orders could not be loaded</strong>
             <p>{error}</p>
           </div>
 
           <button
             type="button"
-            onClick={() =>
-              void loadOrders()
-            }
+            onClick={() => void loadOrders()}
           >
-            <RefreshCw size={16} />
             Retry
           </button>
-        </section>
-      )}
+        </div>
+      ) : null}
 
-      {!error && loading && (
-        <section
-          className={
-            styles.loadingList
-          }
-        >
-          {Array.from({
-            length: 5,
-          }).map((_, index) => (
-            <div
-              className={
-                styles.skeleton
-              }
-              key={index}
-            />
-          ))}
-        </section>
-      )}
+      {/* LOADING */}
 
-      {!error &&
-        !loading &&
-        orders.length === 0 && (
-          <section
-            className={
-              styles.emptyState
-            }
-          >
-            <div
-              className={
-                styles.emptyIcon
-              }
-            >
-              <PackageSearch
-                size={28}
-              />
+      {loading ? (
+        <div className={styles.loadingState}>
+          <div className={styles.loadingSpinner} />
+          <strong>Loading assigned orders...</strong>
+        </div>
+      ) : null}
+
+      {/* EMPTY */}
+
+      {!loading && !error && orders.length === 0 ? (
+        <div className={styles.emptyState}>
+          <PackageSearch size={44} />
+
+          <h2>No orders found</h2>
+
+          <p>
+            There are no orders matching the selected
+            filters.
+          </p>
+        </div>
+      ) : null}
+
+      {/* DESKTOP TABLE */}
+
+      {!loading && !error && orders.length > 0 ? (
+        <>
+          <div className={styles.tableCard}>
+            <div className={styles.tableHeader}>
+              <span>Order / Device</span>
+              <span>Customer & Address</span>
+              <span>Pickup</span>
+              <span>Final Quote</span>
+              <span>Agent</span>
+              <span>Status</span>
+              <span>Action</span>
             </div>
 
-            <h2>
-              No orders found
-            </h2>
+            <div className={styles.tableBody}>
+              {orders.map((order) => (
+                <div
+                  key={order.id}
+                  className={styles.tableRow}
+                >
+                  <div className={styles.deviceCell}>
+                    <strong className={styles.deviceName}>
+                      {order.productName}
+                    </strong>
 
-            <p>
-              No assigned orders
-              match the current
-              search, date and
-              status filters.
-            </p>
+                    <span className={styles.variantText}>
+                      {order.variantLabel || "Variant —"}
+                    </span>
 
-            {(search ||
-              status ||
-              dateFilter !==
-                "ALL") && (
-              <button
-                type="button"
-                onClick={
-                  clearFilters
-                }
-              >
-                Clear filters
-              </button>
-            )}
-          </section>
-        )}
+                    <span className={styles.orderNumber}>
+                      {order.orderNumber}
+                    </span>
+                  </div>
 
-      {!error &&
-        !loading &&
-        orders.length > 0 && (
-          <>
-            <section
-              className={
-                styles.desktopTable
-              }
-            >
-              <div
-                className={
-                  styles.tableHeader
-                }
-              >
-                <span>
-                  Order / Device
-                </span>
+                  <div className={styles.customerCell}>
+                    <div className={styles.customerName}>
+                      <UserRound size={17} />
 
-                <span>
-                  Customer
-                </span>
+                      <strong>
+                        {order.customer?.name ??
+                          "Customer"}
+                      </strong>
+                    </div>
 
-                <span>
-                  Pickup
-                </span>
+                    {order.customer?.phone ? (
+                      <span className={styles.phoneText}>
+                        {order.customer.phone}
+                      </span>
+                    ) : null}
 
-                <span>
-                  Amount
-                </span>
+                    <div className={styles.fullAddress}>
+                      <MapPin size={16} />
+                      <span>
+                        {combineAddress(order.address)}
+                      </span>
+                    </div>
+                  </div>
 
-                <span>
-                  Status
-                </span>
+                  <div className={styles.pickupCell}>
+                    <div className={styles.pickupPrimary}>
+                      <CalendarDays size={17} />
+                      <strong>
+                        {formatDate(order.pickupDate)}
+                      </strong>
+                    </div>
 
-                <span />
-              </div>
+                    <div className={styles.pickupSecondary}>
+                      <Clock3 size={16} />
+                      <span>
+                        {order.pickupSlot?.label ??
+                          "Slot not available"}
+                      </span>
+                    </div>
+                  </div>
 
-              {orders.map(
-                (order) => (
-                  <article
-                    className={
-                      styles.tableRow
-                    }
-                    key={order.id}
-                  >
-                    <div
-                      className={
-                        styles.deviceCell
-                      }
-                    >
-                      <OrderImage
-                        order={order}
-                      />
+                  <div className={styles.quoteCell}>
+                    <span className={styles.quoteLabel}>
+                      Customer Quote
+                    </span>
 
-                      <div>
-                        <strong>
-                          {
-                            order.productName
-                          }
-                        </strong>
+                    <strong className={styles.quoteValue}>
+                      {formatMoney(order.finalPrice)}
+                    </strong>
+                  </div>
 
-                        <span>
-                          {
-                            order.variantLabel
-                          }
+                  <div className={styles.agentCell}>
+                    {order.agent ? (
+                      <>
+                        <strong>{order.agent.name}</strong>
+
+                        {order.agent.mobile ? (
+                          <span>{order.agent.mobile}</span>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        <span className={styles.unassignedAgent}>
+                          <UsersRound size={17} />
+                          Not assigned
                         </span>
 
                         <small>
-                          {
-                            order.orderNumber
-                          }
+                          Agent module will manage assignment
                         </small>
-                      </div>
-                    </div>
+                      </>
+                    )}
+                  </div>
 
-                    <div
-                      className={
-                        styles.customerCell
-                      }
-                    >
-                      <strong>
-                        {order
-                          .customer
-                          ?.name ??
-                          "—"}
-                      </strong>
+                  <div className={styles.statusCell}>
+                    <StatusBadge status={order.status} />
+                  </div>
 
-                      <span>
-                        {order
-                          .customer
-                          ?.phone ??
-                          "—"}
-                      </span>
-
-                      <small>
-                        <MapPin
-                          size={13}
-                        />
-
-                        {order
-                          .location
-                          ?.locality
-                          ? `${order.location.locality}, `
-                          : ""}
-
-                        {order
-                          .location
-                          ?.city ??
-                          "—"}{" "}
-
-                        {order
-                          .location
-                          ?.pincode ??
-                          ""}
-                      </small>
-                    </div>
-
-                    <div
-                      className={
-                        styles.pickupCell
-                      }
-                    >
-                      <span>
-                        <CalendarDays
-                          size={15}
-                        />
-
-                        {formatDate(
-                          order.pickupDate,
-                        )}
-                      </span>
-
-                      <small>
-                        <Clock3
-                          size={14}
-                        />
-
-                        {order
-                          .pickupSlot
-                          ?.label ??
-                          "—"}
-                      </small>
-                    </div>
-
-                    <div
-                      className={
-                        styles.amountCell
-                      }
-                    >
-                      <strong>
-                        {formatMoney(
-                          order.finalPrice,
-                        )}
-                      </strong>
-
-                      <small>
-                        Customer final
-                        quote
-                      </small>
-                    </div>
-
-                    <div>
-                      <span
-                        className={`${styles.statusBadge} ${statusClass(
-                          order.status,
-                        )}`}
-                      >
-                        {formatStatus(
-                          order.status,
-                        )}
-                      </span>
-
-                      <small
-                        className={
-                          styles.assignedTime
-                        }
-                      >
-                        Assigned{" "}
-                        {formatDateTime(
-                          order
-                            .assignment
-                            ?.assignedAt,
-                        )}
-                      </small>
-                    </div>
-
+                  <div className={styles.actionCell}>
                     <button
-                      className={
-                        styles.viewButton
-                      }
                       type="button"
+                      className={styles.viewButton}
                       onClick={() =>
-                        void openDetails(
-                          order.orderNumber,
-                        )
+                        void openDetails(order.orderNumber)
                       }
                     >
-                      <Eye
-                        size={17}
-                      />
+                      <Eye size={17} />
                       View
                     </button>
-                  </article>
-                ),
-              )}
-            </section>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
-            <section
-              className={
-                styles.mobileCards
-              }
-            >
-              {orders.map(
-                (order) => (
-                  <article
-                    className={
-                      styles.orderCard
-                    }
-                    key={order.id}
-                  >
-                    <div
-                      className={
-                        styles.cardTop
-                      }
-                    >
-                      <div
-                        className={
-                          styles.cardDevice
-                        }
-                      >
-                        <OrderImage
-                          order={order}
-                        />
+          {/* MOBILE CARDS */}
 
-                        <div>
-                          <strong>
-                            {
-                              order.productName
-                            }
-                          </strong>
+          <div className={styles.mobileList}>
+            {orders.map((order) => (
+              <article
+                key={order.id}
+                className={styles.mobileCard}
+              >
+                <div className={styles.mobileCardTop}>
+                  <div>
+                    <strong className={styles.mobileDeviceName}>
+                      {order.productName}
+                    </strong>
 
-                          <span>
-                            {
-                              order.variantLabel
-                            }
-                          </span>
-                        </div>
-                      </div>
+                    <span className={styles.mobileVariant}>
+                      {order.variantLabel}
+                    </span>
+                  </div>
 
-                      <span
-                        className={`${styles.statusBadge} ${statusClass(
-                          order.status,
-                        )}`}
-                      >
-                        {formatStatus(
-                          order.status,
-                        )}
-                      </span>
-                    </div>
+                  <StatusBadge status={order.status} />
+                </div>
 
-                    <div
-                      className={
-                        styles.orderNumber
-                      }
-                    >
-                      {
-                        order.orderNumber
-                      }
-                    </div>
-
-                    <div
-                      className={
-                        styles.cardGrid
-                      }
-                    >
-                      <div>
-                        <UserRound
-                          size={16}
-                        />
-
-                        <span>
-                          <small>
-                            Customer
-                          </small>
-
-                          <strong>
-                            {order
-                              .customer
-                              ?.name ??
-                              "—"}
-                          </strong>
-                        </span>
-                      </div>
-
-                      <div>
-                        <IndianRupee
-                          size={16}
-                        />
-
-                        <span>
-                          <small>
-                            Final quote
-                          </small>
-
-                          <strong>
-                            {formatMoney(
-                              order.finalPrice,
-                            )}
-                          </strong>
-                        </span>
-                      </div>
-
-                      <div>
-                        <CalendarDays
-                          size={16}
-                        />
-
-                        <span>
-                          <small>
-                            Pickup
-                          </small>
-
-                          <strong>
-                            {formatDate(
-                              order.pickupDate,
-                            )}
-                          </strong>
-                        </span>
-                      </div>
-
-                      <div>
-                        <MapPin
-                          size={16}
-                        />
-
-                        <span>
-                          <small>
-                            Location
-                          </small>
-
-                          <strong>
-                            {order
-                              .location
-                              ?.city ??
-                              "—"}
-                            ,{" "}
-                            {order
-                              .location
-                              ?.pincode ??
-                              "—"}
-                          </strong>
-                        </span>
-                      </div>
-                    </div>
-
-                    <div
-                      className={
-                        styles.mobileSlot
-                      }
-                    >
-                      <Clock3
-                        size={15}
-                      />
-
-                      {order
-                        .pickupSlot
-                        ?.label ??
-                        "Pickup slot unavailable"}
-                    </div>
-
-                    <button
-                      className={
-                        styles.mobileViewButton
-                      }
-                      type="button"
-                      onClick={() =>
-                        void openDetails(
-                          order.orderNumber,
-                        )
-                      }
-                    >
-                      View order
-                      <Eye
-                        size={17}
-                      />
-                    </button>
-                  </article>
-                ),
-              )}
-            </section>
-
-            <section
-              className={
-                styles.pagination
-              }
-            >
-              <span>
-                {total} assigned{" "}
-                {total === 1
-                  ? "order"
-                  : "orders"}
-              </span>
-
-              <div>
-                <button
-                  type="button"
-                  disabled={
-                    page <= 1
-                  }
-                  onClick={() =>
-                    setPage(
-                      (current) =>
-                        Math.max(
-                          1,
-                          current -
-                            1,
-                        ),
-                    )
-                  }
-                >
-                  <ChevronLeft
-                    size={17}
-                  />
-                  Previous
-                </button>
-
-                <span>
-                  Page {page} of{" "}
-                  {totalPages}
+                <span className={styles.mobileOrderNumber}>
+                  {order.orderNumber}
                 </span>
 
+                <div className={styles.mobileSection}>
+                  <span className={styles.mobileLabel}>
+                    Customer
+                  </span>
+
+                  <strong>
+                    {order.customer?.name ?? "Customer"}
+                  </strong>
+
+                  {order.customer?.phone ? (
+                    <span>{order.customer.phone}</span>
+                  ) : null}
+                </div>
+
+                <div className={styles.mobileAddress}>
+                  <MapPin size={18} />
+
+                  <span>{combineAddress(order.address)}</span>
+                </div>
+
+                <div className={styles.mobileGrid}>
+                  <div>
+                    <span className={styles.mobileLabel}>
+                      Pickup
+                    </span>
+
+                    <strong>
+                      {formatDate(order.pickupDate)}
+                    </strong>
+
+                    <span>
+                      {order.pickupSlot?.label ??
+                        "Slot not available"}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className={styles.mobileLabel}>
+                      Final Quote
+                    </span>
+
+                    <strong className={styles.mobileQuote}>
+                      {formatMoney(order.finalPrice)}
+                    </strong>
+                  </div>
+                </div>
+
+                <div className={styles.mobileAgent}>
+                  <UsersRound size={18} />
+
+                  <div>
+                    <span className={styles.mobileLabel}>
+                      Agent
+                    </span>
+
+                    <strong>
+                      {order.agent?.name ?? "Not assigned"}
+                    </strong>
+                  </div>
+                </div>
+
                 <button
                   type="button"
-                  disabled={
-                    page >=
-                    totalPages
-                  }
+                  className={styles.mobileViewButton}
                   onClick={() =>
-                    setPage(
-                      (current) =>
-                        Math.min(
-                          totalPages,
-                          current +
-                            1,
-                        ),
-                    )
+                    void openDetails(order.orderNumber)
                   }
                 >
-                  Next
-
-                  <ChevronRight
-                    size={17}
-                  />
+                  <Eye size={18} />
+                  View Details
                 </button>
-              </div>
-            </section>
-          </>
-        )}
+              </article>
+            ))}
+          </div>
 
-      {detailsOrderNumber && (
+          {/* PAGINATION */}
+
+          <div className={styles.pagination}>
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() =>
+                setPage((current) =>
+                  Math.max(1, current - 1),
+                )
+              }
+            >
+              <ChevronLeft size={18} />
+              Previous
+            </button>
+
+            <span>
+              Page <strong>{page}</strong> of{" "}
+              <strong>{totalPages}</strong>
+            </span>
+
+            <button
+              type="button"
+              disabled={page >= totalPages}
+              onClick={() =>
+                setPage((current) =>
+                  Math.min(totalPages, current + 1),
+                )
+              }
+            >
+              Next
+              <ChevronRight size={18} />
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {/* ORDER DETAILS WORKSPACE */}
+
+      {detailsOrderNumber ? (
         <div
-          className={
-            styles.modalOverlay
-          }
+          className={styles.modalBackdrop}
           role="presentation"
-          onMouseDown={(
-            event,
-          ) => {
-            if (
-              event.target ===
-              event.currentTarget
-            ) {
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) {
               closeDetails();
             }
           }}
         >
           <section
-            className={
-              styles.modal
-            }
+            className={styles.modal}
             role="dialog"
             aria-modal="true"
             aria-label="Order details"
           >
-            <header
-              className={
-                styles.modalHeader
-              }
-            >
+            <header className={styles.modalHeader}>
               <div>
-                <span>
-                  ORDER DETAILS
+                <span className={styles.modalEyebrow}>
+                  Order Workspace
                 </span>
 
                 <h2>
-                  {
-                    detailsOrderNumber
-                  }
+                  {selectedOrder?.product.name ??
+                    "Order Details"}
                 </h2>
+
+                <p>
+                  {selectedOrder?.orderNumber ??
+                    detailsOrderNumber}
+                </p>
               </div>
+
+              <div className={styles.modalHeaderRight}>
+                {selectedOrder ? (
+                  <StatusBadge
+                    status={selectedOrder.status}
+                  />
+                ) : null}
+
+                <button
+                  type="button"
+                  className={styles.closeButton}
+                  onClick={closeDetails}
+                  aria-label="Close order details"
+                >
+                  <X size={22} />
+                </button>
+              </div>
+            </header>
+
+            <div className={styles.detailTabs}>
+              <button
+                type="button"
+                className={
+                  activeTab === "OVERVIEW"
+                    ? styles.detailTabActive
+                    : ""
+                }
+                onClick={() => setActiveTab("OVERVIEW")}
+              >
+                Overview
+              </button>
 
               <button
                 type="button"
-                onClick={
-                  closeDetails
+                className={
+                  activeTab === "DEVICE_REPORT"
+                    ? styles.detailTabActive
+                    : ""
                 }
-                aria-label="Close order details"
+                onClick={() =>
+                  setActiveTab("DEVICE_REPORT")
+                }
               >
-                <X size={20} />
+                Device Report
               </button>
-            </header>
 
-            <div
-              className={
-                styles.modalBody
-              }
-            >
-              {detailsLoading && (
-                <>
-                  <div
-                    className={
-                      styles.detailSkeleton
-                    }
-                  />
+              <button
+                type="button"
+                className={
+                  activeTab === "AGENT_INSPECTION"
+                    ? styles.detailTabActive
+                    : ""
+                }
+                onClick={() =>
+                  setActiveTab("AGENT_INSPECTION")
+                }
+              >
+                Agent Inspection
+              </button>
 
-                  <div
-                    className={
-                      styles.detailSkeleton
-                    }
-                  />
+              <button
+                type="button"
+                className={
+                  activeTab === "HISTORY"
+                    ? styles.detailTabActive
+                    : ""
+                }
+                onClick={() => setActiveTab("HISTORY")}
+              >
+                History
+              </button>
+            </div>
 
-                  <div
-                    className={
-                      styles.detailSkeleton
-                    }
-                  />
-                </>
-              )}
-
-              {detailsError && (
-                <div
-                  className={
-                    styles.modalError
-                  }
-                >
-                  <strong>
-                    Unable to load
-                    details
-                  </strong>
-
-                  <p>
-                    {detailsError}
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void openDetails(
-                        detailsOrderNumber,
-                      )
-                    }
-                  >
-                    Retry
-                  </button>
+            <div className={styles.modalBody}>
+              {detailsLoading ? (
+                <div className={styles.detailsLoading}>
+                  <div className={styles.loadingSpinner} />
+                  <strong>Loading order details...</strong>
                 </div>
-              )}
+              ) : null}
+
+              {detailsError ? (
+                <div className={styles.detailsError}>
+                  <CircleAlert size={28} />
+
+                  <div>
+                    <strong>
+                      Unable to load order details
+                    </strong>
+                    <p>{detailsError}</p>
+                  </div>
+                </div>
+              ) : null}
 
               {!detailsLoading &&
-                !detailsError &&
-                selectedOrder && (
-                  <OrderDetailsView
-                    data={
-                      selectedOrder
-                    }
-                  />
-                )}
+              !detailsError &&
+              selectedOrder ? (
+                <>
+                  {activeTab === "OVERVIEW" ? (
+                    <OverviewTab order={selectedOrder} />
+                  ) : null}
+
+                  {activeTab === "DEVICE_REPORT" ? (
+                    <DeviceReportTab
+                      order={selectedOrder}
+                    />
+                  ) : null}
+
+                  {activeTab === "AGENT_INSPECTION" ? (
+                    <AgentInspectionTab
+                      order={selectedOrder}
+                    />
+                  ) : null}
+
+                  {activeTab === "HISTORY" ? (
+                    <HistoryTab order={selectedOrder} />
+                  ) : null}
+                </>
+              ) : null}
             </div>
           </section>
         </div>
-      )}
-    </div>
-  );
-}
-
-function OrderDetailsView({
-  data,
-}: {
-  data: VendorOrderDetails;
-}) {
-  return (
-    <div
-      className={styles.details}
-    >
-      <section
-        className={
-          styles.detailHero
-        }
-      >
-        <div
-          className={
-            styles.detailIcon
-          }
-        >
-          <Smartphone
-            size={24}
-          />
-        </div>
-
-        <div>
-          <span>DEVICE</span>
-
-          <h3>
-            {data.product.name}
-          </h3>
-
-          <p>
-            {data.product.variant}
-          </p>
-        </div>
-
-        <strong>
-          {formatMoney(
-            data.pricing.finalPrice,
-          )}
-        </strong>
-      </section>
-
-      <section
-        className={
-          styles.quoteSection
-        }
-      >
-        <div
-          className={
-            styles.sectionHeading
-          }
-        >
-          <div>
-            <span>
-              CUSTOMER QUOTE
-            </span>
-
-            <h3>
-              Original system quote
-            </h3>
-          </div>
-        </div>
-
-        <div
-          className={
-            styles.quoteRows
-          }
-        >
-          <div>
-            <span>
-              Base Price
-            </span>
-
-            <strong>
-              {formatMoney(
-                data.pricing
-                  .basePrice,
-              )}
-            </strong>
-          </div>
-
-          <div>
-            <span>
-              Total Deduction
-            </span>
-
-            <strong
-              className={
-                styles.deductionValue
-              }
-            >
-              -
-              {formatMoney(
-                data.pricing
-                  .totalDeduction,
-              )}
-            </strong>
-          </div>
-
-          <div
-            className={
-              styles.finalQuoteRow
-            }
-          >
-            <span>
-              Customer Final Quote
-            </span>
-
-            <strong>
-              {formatMoney(
-                data.pricing
-                  .finalPrice,
-              )}
-            </strong>
-          </div>
-        </div>
-      </section>
-
-      <div
-        className={
-          styles.detailSections
-        }
-      >
-        <section>
-          <h4>Customer</h4>
-
-          <dl>
-            <DetailRow
-              label="Name"
-              value={
-                data.customer
-                  ?.name
-              }
-            />
-
-            <DetailRow
-              label="Phone"
-              value={
-                data.customer
-                  ?.phone
-              }
-            />
-          </dl>
-        </section>
-
-        <section>
-          <h4>Pickup</h4>
-
-          <dl>
-            <DetailRow
-              label="Date"
-              value={formatDate(
-                data.pickup.date,
-              )}
-            />
-
-            <DetailRow
-              label="Slot"
-              value={
-                data.pickup.slot
-                  ?.label
-              }
-            />
-
-            <DetailRow
-              label="Time"
-              value={
-                data.pickup.slot
-                  ? `${data.pickup.slot.startTime} - ${data.pickup.slot.endTime}`
-                  : "—"
-              }
-            />
-          </dl>
-        </section>
-
-        <section>
-          <h4>
-            Pickup Address
-          </h4>
-
-          <dl>
-            <DetailRow
-              label="House"
-              value={
-                data.address
-                  ?.house
-              }
-            />
-
-            <DetailRow
-              label="Street"
-              value={
-                data.address
-                  ?.street
-              }
-            />
-
-            <DetailRow
-              label="Locality"
-              value={
-                data.address
-                  ?.locality
-              }
-            />
-
-            <DetailRow
-              label="Landmark"
-              value={
-                data.address
-                  ?.landmark
-              }
-            />
-
-            <DetailRow
-              label="City"
-              value={
-                data.address
-                  ?.city
-              }
-            />
-
-            <DetailRow
-              label="State"
-              value={
-                data.address
-                  ?.state
-              }
-            />
-
-            <DetailRow
-              label="Pincode"
-              value={
-                data.address
-                  ?.pincode
-              }
-            />
-          </dl>
-        </section>
-
-        <section>
-          <h4>Order</h4>
-
-          <dl>
-            <DetailRow
-              label="Status"
-              value={formatStatus(
-                data.status,
-              )}
-            />
-
-            <DetailRow
-              label="Created"
-              value={formatDateTime(
-                data.createdAt,
-              )}
-            />
-
-            <DetailRow
-              label="Updated"
-              value={formatDateTime(
-                data.updatedAt,
-              )}
-            />
-          </dl>
-        </section>
-      </div>
-
-      <QuestionnaireSection
-        questionnaire={
-          data.questionnaire
-        }
-      />
-
-      <section
-        className={
-          styles.historySection
-        }
-      >
-        <div
-          className={
-            styles.sectionHeading
-          }
-        >
-          <div>
-            <span>
-              VENDOR ROUTING
-            </span>
-
-            <h3>
-              Assignment History
-            </h3>
-          </div>
-        </div>
-
-        {data.assignmentHistory
-          .length === 0 ? (
-          <EmptyHistory text="No assignment history available." />
-        ) : (
-          <div
-            className={
-              styles.timeline
-            }
-          >
-            {data.assignmentHistory.map(
-              (item) => (
-                <div
-                  key={item.id}
-                  className={
-                    styles.timelineItem
-                  }
-                >
-                  <div
-                    className={
-                      styles.timelineDot
-                    }
-                  />
-
-                  <div>
-                    <strong>
-                      {formatStatus(
-                        item.source,
-                      )}
-                    </strong>
-
-                    <span>
-                      {formatStatus(
-                        item.reason,
-                      )}
-                    </span>
-
-                    <small>
-                      Assigned{" "}
-                      {formatDateTime(
-                        item.assignedAt,
-                      )}
-                    </small>
-
-                    {item.unassignedAt && (
-                      <small>
-                        Unassigned{" "}
-                        {formatDateTime(
-                          item.unassignedAt,
-                        )}
-                      </small>
-                    )}
-                  </div>
-                </div>
-              ),
-            )}
-          </div>
-        )}
-      </section>
-
-      <section
-        className={
-          styles.historySection
-        }
-      >
-        <div
-          className={
-            styles.sectionHeading
-          }
-        >
-          <div>
-            <span>
-              ORDER HISTORY
-            </span>
-
-            <h3>
-              Status Timeline
-            </h3>
-          </div>
-        </div>
-
-        {data.statusHistory
-          .length === 0 ? (
-          <EmptyHistory text="No status history available." />
-        ) : (
-          <div
-            className={
-              styles.timeline
-            }
-          >
-            {data.statusHistory.map(
-              (item) => (
-                <div
-                  key={item.id}
-                  className={
-                    styles.timelineItem
-                  }
-                >
-                  <div
-                    className={
-                      styles.timelineDot
-                    }
-                  />
-
-                  <div>
-                    <strong>
-                      {formatStatus(
-                        item.status,
-                      )}
-                    </strong>
-
-                    {item.note && (
-                      <span>
-                        {item.note}
-                      </span>
-                    )}
-
-                    <small>
-                      {formatDateTime(
-                        item.createdAt,
-                      )}
-                    </small>
-                  </div>
-                </div>
-              ),
-            )}
-          </div>
-        )}
-      </section>
-
-      {data.reschedules.length >
-        0 && (
-        <section
-          className={
-            styles.historySection
-          }
-        >
-          <div
-            className={
-              styles.sectionHeading
-            }
-          >
-            <div>
-              <span>
-                PICKUP HISTORY
-              </span>
-
-              <h3>
-                Reschedules
-              </h3>
-            </div>
-          </div>
-
-          <div
-            className={
-              styles.timeline
-            }
-          >
-            {data.reschedules.map(
-              (item) => (
-                <div
-                  key={item.id}
-                  className={
-                    styles.timelineItem
-                  }
-                >
-                  <div
-                    className={
-                      styles.timelineDot
-                    }
-                  />
-
-                  <div>
-                    <strong>
-                      Pickup
-                      rescheduled
-                    </strong>
-
-                    <span>
-                      {formatDate(
-                        item.oldPickupDate,
-                      )}{" "}
-                      →{" "}
-                      {formatDate(
-                        item.newPickupDate,
-                      )}
-                    </span>
-
-                    <small>
-                      {
-                        item.oldSlotLabel
-                      }{" "}
-                      →{" "}
-                      {
-                        item.newSlotLabel
-                      }
-                    </small>
-
-                    <small>
-                      {formatDateTime(
-                        item.createdAt,
-                      )}
-                    </small>
-                  </div>
-                </div>
-              ),
-            )}
-          </div>
-        </section>
-      )}
-
-      <section
-        className={
-          styles.agentPlaceholder
-        }
-      >
-        <div>
-          <span>AGENT</span>
-
-          <h3>
-            Pickup Agent
-          </h3>
-
-          <p>
-            No agent has been
-            assigned yet. Agent
-            assignment, inspection,
-            re-quote and pickup
-            history will appear here
-            after the Agent module is
-            connected.
-          </p>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function DetailRow({
-  label,
-  value,
-}: {
-  label: string;
-  value:
-    | string
-    | number
-    | null
-    | undefined;
-}) {
-  return (
-    <div>
-      <dt>{label}</dt>
-
-      <dd>
-        {value === null ||
-        value === undefined ||
-        value === ""
-          ? "—"
-          : String(value)}
-      </dd>
-    </div>
-  );
-}
-
-function EmptyHistory({
-  text,
-}: {
-  text: string;
-}) {
-  return (
-    <div
-      className={
-        styles.historyEmpty
-      }
-    >
-      {text}
-    </div>
-  );
-}
-
-/*
- * QuestionnaireSnapshot is JSON.
- *
- * We do NOT recalculate deductions here.
- * We only render the frozen values stored
- * when the customer placed the order.
- *
- * This renderer supports nested sections,
- * questions and answer objects without
- * changing financial values.
- */
-function QuestionnaireSection({
-  questionnaire,
-}: {
-  questionnaire: unknown;
-}) {
-  if (
-    questionnaire === null ||
-    questionnaire === undefined
-  ) {
-    return (
-      <section
-        className={
-          styles.questionnaireSection
-        }
-      >
-        <div
-          className={
-            styles.sectionHeading
-          }
-        >
-          <div>
-            <span>
-              DEVICE CONDITION
-            </span>
-
-            <h3>
-              Customer Answers
-            </h3>
-          </div>
-        </div>
-
-        <EmptyHistory text="No questionnaire snapshot available." />
-      </section>
-    );
-  }
-
-  const entries =
-    extractQuestionnaireEntries(
-      questionnaire,
-    );
-
-  return (
-    <section
-      className={
-        styles.questionnaireSection
-      }
-    >
-      <div
-        className={
-          styles.sectionHeading
-        }
-      >
-        <div>
-          <span>
-            DEVICE CONDITION
-          </span>
-
-          <h3>
-            Customer Answers &
-            Deductions
-          </h3>
-        </div>
-      </div>
-
-      {entries.length === 0 ? (
-        <div
-          className={
-            styles.rawSnapshot
-          }
-        >
-          <pre>
-            {JSON.stringify(
-              questionnaire,
-              null,
-              2,
-            )}
-          </pre>
-        </div>
-      ) : (
-        <div
-          className={
-            styles.questionList
-          }
-        >
-          {entries.map(
-            (entry, index) => (
-              <article
-                key={`${entry.question}-${index}`}
-                className={
-                  styles.questionRow
-                }
-              >
-                <div>
-                  {entry.section && (
-                    <small>
-                      {entry.section}
-                    </small>
-                  )}
-
-                  <strong>
-                    {
-                      entry.question
-                    }
-                  </strong>
-
-                  <span>
-                    Answer:{" "}
-                    <b>
-                      {entry.answer}
-                    </b>
-                  </span>
-                </div>
-
-                <div
-                  className={
-                    entry.deduction >
-                    0
-                      ? styles.questionDeduction
-                      : styles.noDeduction
-                  }
-                >
-                  {entry.deduction >
-                  0
-                    ? `-${formatMoney(
-                        entry.deduction,
-                      )}`
-                    : "No deduction"}
-                </div>
-              </article>
-            ),
-          )}
-        </div>
-      )}
+      ) : null}
     </section>
   );
 }
 
-type QuestionnaireEntry = {
-  section: string;
-  question: string;
-  answer: string;
-  deduction: number;
-};
+function OverviewTab({
+  order,
+}: {
+  order: VendorOrderDetails;
+}) {
+  return (
+    <div className={styles.tabContent}>
+      <section className={styles.quoteSummary}>
+        <div>
+          <span>Base Price</span>
+          <strong>
+            {formatMoney(order.pricing.basePrice)}
+          </strong>
+        </div>
 
-function extractQuestionnaireEntries(
-  value: unknown,
-): QuestionnaireEntry[] {
-  const result:
-    QuestionnaireEntry[] = [];
+        <div>
+          <span>Total Deduction</span>
+          <strong className={styles.deductionValue}>
+            -{formatMoney(order.pricing.totalDeduction)}
+          </strong>
+        </div>
 
-  const visited =
-    new WeakSet<object>();
+        <div className={styles.finalQuoteBox}>
+          <span>Customer Final Quote</span>
+          <strong>
+            {formatMoney(order.pricing.finalPrice)}
+          </strong>
+        </div>
+      </section>
 
-  function walk(
-    node: unknown,
-    inheritedSection = "",
-  ) {
-    if (
-      node === null ||
-      node === undefined
-    ) {
-      return;
-    }
+      <div className={styles.overviewGrid}>
+        <DetailCard
+          icon={<UserRound size={21} />}
+          label="Customer"
+        >
+          <strong>
+            {order.customer?.name ?? "—"}
+          </strong>
 
-    if (Array.isArray(node)) {
-      for (const item of node) {
-        walk(
-          item,
-          inheritedSection,
-        );
-      }
+          <span>
+            {order.customer?.phone ?? "—"}
+          </span>
+        </DetailCard>
 
-      return;
-    }
+        <DetailCard
+          icon={<CalendarDays size={21} />}
+          label="Pickup"
+        >
+          <strong>{formatDate(order.pickup.date)}</strong>
 
-    if (
-      typeof node !== "object"
-    ) {
-      return;
-    }
+          <span>
+            {order.pickup.slot?.label ??
+              "Slot not available"}
+          </span>
+        </DetailCard>
 
-    if (
-      visited.has(
-        node as object,
-      )
-    ) {
-      return;
-    }
+        <DetailCard
+          icon={<IndianRupee size={21} />}
+          label="Payout"
+        >
+          <strong>
+            {formatStatus(order.payout.method)}
+          </strong>
 
-    visited.add(
-      node as object,
-    );
+          {order.payout.upiMobile ? (
+            <span>{order.payout.upiMobile}</span>
+          ) : null}
+        </DetailCard>
 
-    const object =
-      node as Record<
-        string,
-        unknown
-      >;
+        <DetailCard
+          icon={<UsersRound size={21} />}
+          label="Assigned Agent"
+        >
+          {order.agent ? (
+            <>
+              <strong>{order.agent.name}</strong>
+              <span>{order.agent.mobile ?? ""}</span>
+            </>
+          ) : (
+            <>
+              <strong>Not assigned</strong>
+              <span>
+                Agent assignment will be enabled in the
+                Agent module.
+              </span>
+            </>
+          )}
+        </DetailCard>
+      </div>
 
-    const section =
-      firstText(object, [
-        "section",
-        "sectionName",
-        "category",
-        "categoryName",
-        "group",
-        "groupName",
-      ]) || inheritedSection;
+      <section className={styles.infoPanel}>
+        <div className={styles.sectionHeading}>
+          <MapPin size={21} />
 
-    const question =
-      firstText(object, [
-        "question",
-        "questionText",
-        "label",
-        "title",
-        "name",
-      ]);
+          <div>
+            <h3>Pickup Address</h3>
+            <p>Customer provided pickup location</p>
+          </div>
+        </div>
 
-    const answerValue =
-      firstValue(object, [
-        "answer",
-        "answerText",
-        "selectedAnswer",
-        "selectedOption",
-        "value",
-        "response",
-      ]);
+        <div className={styles.addressBlock}>
+          <strong>
+            {order.address?.fullName ??
+              order.customer?.name ??
+              "Customer"}
+          </strong>
 
-    const deduction =
-      firstNumber(object, [
-        "deduction",
-        "deductionAmount",
-        "amount",
-        "priceDeduction",
-        "deductedAmount",
-      ]);
+          <span>{combineAddress(order.address)}</span>
 
-    if (
-      question &&
-      answerValue !== undefined
-    ) {
-      result.push({
-        section,
+          {order.address?.phone ? (
+            <span>{order.address.phone}</span>
+          ) : null}
+        </div>
+      </section>
 
-        question,
+      <section className={styles.infoPanel}>
+        <div className={styles.sectionHeading}>
+          <ClipboardCheck size={21} />
 
-        answer:
-          stringifyAnswer(
-            answerValue,
-          ),
+          <div>
+            <h3>Device</h3>
+            <p>Customer selected device configuration</p>
+          </div>
+        </div>
 
-        deduction:
-          Math.max(
-            0,
-            deduction ?? 0,
-          ),
-      });
-    }
+        <div className={styles.deviceOverview}>
+          <div>
+            <span>Device</span>
+            <strong>{order.product.name}</strong>
+          </div>
 
-    for (
-      const [
-        key,
-        child,
-      ] of Object.entries(
-        object,
-      )
-    ) {
-      if (
-        [
-          "answer",
-          "answerText",
-          "selectedAnswer",
-          "selectedOption",
-          "value",
-          "response",
-        ].includes(key)
-      ) {
-        continue;
-      }
+          <div>
+            <span>Variant</span>
+            <strong>{order.product.variant}</strong>
+          </div>
 
-      if (
-        child &&
-        typeof child ===
-          "object"
-      ) {
-        walk(
-          child,
-          section,
-        );
-      }
-    }
-  }
-
-  walk(value);
-
-  return result;
+          <div>
+            <span>Current Status</span>
+            <StatusBadge status={order.status} />
+          </div>
+        </div>
+      </section>
+    </div>
+  );
 }
 
-function firstText(
-  object: Record<
-    string,
-    unknown
-  >,
-  keys: string[],
-) {
-  for (const key of keys) {
-    const value =
-      object[key];
+function DeviceReportTab({
+  order,
+}: {
+  order: VendorOrderDetails;
+}) {
+  const report = order.deviceReport;
 
-    if (
-      typeof value ===
-        "string" &&
-      value.trim()
-    ) {
-      return value.trim();
-    }
-  }
+  return (
+    <div className={styles.tabContent}>
+      <section className={styles.reportHero}>
+        <div>
+          <span className={styles.reportHeroLabel}>
+            Customer Device Report
+          </span>
 
-  return "";
+          <h3>{order.product.name}</h3>
+
+          <p>
+            {order.product.variant}
+          </p>
+        </div>
+
+        <div className={styles.reportQuote}>
+          <span>Original Final Quote</span>
+
+          <strong>
+            {formatMoney(order.pricing.finalPrice)}
+          </strong>
+        </div>
+      </section>
+
+      <div className={styles.reportNotice}>
+        <ShieldCheck size={20} />
+
+        <p>
+          This report shows the customer&apos;s original
+          questionnaire selections. Historical per-answer
+          deduction is not shown unless it was frozen at the
+          time of quote. Current deduction rules are never
+          used to rewrite an old order.
+        </p>
+      </div>
+
+      {!report?.available ||
+      !report.sections?.length ? (
+        <div className={styles.reportEmpty}>
+          <ClipboardCheck size={40} />
+
+          <h3>Device report unavailable</h3>
+
+          <p>
+            This order does not contain questionnaire data
+            that can be resolved into a report.
+          </p>
+        </div>
+      ) : (
+        <div className={styles.reportSections}>
+          {report.sections.map((section) => (
+            <section
+              key={section.id}
+              className={styles.reportSection}
+            >
+              <header className={styles.reportSectionHeader}>
+                <div>
+                  <h3>{section.name}</h3>
+
+                  <span>
+                    {section.checks.length}{" "}
+                    {section.checks.length === 1
+                      ? "check"
+                      : "checks"}
+                  </span>
+                </div>
+              </header>
+
+              <div className={styles.reportChecks}>
+                {section.checks.map((check) => (
+                  <div
+                    key={check.itemId}
+                    className={styles.reportCheck}
+                  >
+                    <div className={styles.reportQuestion}>
+                      <span className={styles.reportItemName}>
+                        {check.name}
+                      </span>
+
+                      <strong>{check.question}</strong>
+                    </div>
+
+                    <div className={styles.reportAnswers}>
+                      {check.selectedAnswers.length ? (
+                        check.selectedAnswers.map(
+                          (answer) => (
+                            <div
+                              key={`${check.itemId}-${answer.id}-${answer.selectionType}`}
+                              className={styles.reportAnswer}
+                            >
+                              <DeviceAnswerState
+                                severity={answer.severity}
+                              />
+
+                              <div>
+                                <strong>
+                                  {answer.label}
+                                </strong>
+
+                                {answer.issueGroup?.name ? (
+                                  <span>
+                                    {
+                                      answer.issueGroup
+                                        .name
+                                    }
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                          ),
+                        )
+                      ) : (
+                        <div
+                          className={
+                            styles.reportAnswerUnavailable
+                          }
+                        >
+                          <CircleAlert size={18} />
+                          Selected answer label unavailable
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+
+      <section className={styles.reportTotals}>
+        <div>
+          <span>Base Price</span>
+
+          <strong>
+            {formatMoney(order.pricing.basePrice)}
+          </strong>
+        </div>
+
+        <div>
+          <span>Total Deduction</span>
+
+          <strong>
+            {formatMoney(order.pricing.totalDeduction)}
+          </strong>
+        </div>
+
+        <div>
+          <span>Final Quote</span>
+
+          <strong>
+            {formatMoney(order.pricing.finalPrice)}
+          </strong>
+        </div>
+      </section>
+    </div>
+  );
 }
 
-function firstValue(
-  object: Record<
-    string,
-    unknown
-  >,
-  keys: string[],
-) {
-  for (const key of keys) {
-    if (
-      Object.prototype.hasOwnProperty.call(
-        object,
-        key,
-      )
-    ) {
-      return object[key];
-    }
-  }
+function AgentInspectionTab({
+  order,
+}: {
+  order: VendorOrderDetails;
+}) {
+  return (
+    <div className={styles.tabContent}>
+      <section className={styles.agentInspectionHero}>
+        <div className={styles.agentInspectionIcon}>
+          <UsersRound size={30} />
+        </div>
 
-  return undefined;
+        <div>
+          <h3>Agent Inspection</h3>
+
+          <p>
+            Agent inspection and re-quote will remain
+            separate from the customer&apos;s original
+            questionnaire and quote.
+          </p>
+        </div>
+      </section>
+
+      <div className={styles.agentQuoteComparison}>
+        <div>
+          <span>Original Customer Quote</span>
+
+          <strong>
+            {formatMoney(order.pricing.finalPrice)}
+          </strong>
+        </div>
+
+        <div>
+          <span>Agent Final Quote</span>
+
+          <strong>Not available</strong>
+        </div>
+      </div>
+
+      <div className={styles.agentEmptyState}>
+        <ClipboardCheck size={42} />
+
+        <h3>No agent inspection yet</h3>
+
+        <p>
+          Once an agent is assigned and the customer OTP is
+          verified, the agent inspection will appear here.
+          The customer&apos;s original Device Report will
+          remain unchanged.
+        </p>
+      </div>
+    </div>
+  );
 }
 
-function firstNumber(
-  object: Record<
-    string,
-    unknown
-  >,
-  keys: string[],
-) {
-  for (const key of keys) {
-    const raw =
-      object[key];
+function HistoryTab({
+  order,
+}: {
+  order: VendorOrderDetails;
+}) {
+  const events = [
+    ...order.statusHistory.map((entry) => ({
+      key: `status-${entry.id}`,
+      type: "STATUS",
+      title: formatStatus(entry.status),
+      description:
+        entry.note || "Order status updated.",
+      date: entry.createdAt,
+    })),
 
-    const value =
-      Number(raw);
+    ...order.assignmentHistory.map((entry) => ({
+      key: `assignment-${entry.id}`,
+      type: "ASSIGNMENT",
+      title: "Vendor Assigned",
+      description: `${formatStatus(
+        entry.source,
+      )} • ${formatStatus(entry.reason)}`,
+      date: entry.assignedAt,
+    })),
 
-    if (
-      raw !== null &&
-      raw !== "" &&
-      Number.isFinite(value)
-    ) {
-      return value;
-    }
-  }
+    ...order.reschedules.map((entry) => ({
+      key: `reschedule-${entry.id}`,
+      type: "RESCHEDULE",
+      title: "Pickup Rescheduled",
+      description: `${formatDate(
+        entry.oldPickupDate,
+      )} → ${formatDate(entry.newPickupDate)}${
+        entry.newSlotLabel
+          ? ` • ${entry.newSlotLabel}`
+          : ""
+      }`,
+      date: entry.createdAt,
+    })),
+  ].sort(
+    (a, b) =>
+      new Date(b.date).getTime() -
+      new Date(a.date).getTime(),
+  );
 
-  return undefined;
-}
+  return (
+    <div className={styles.tabContent}>
+      <section className={styles.historyHeader}>
+        <History size={23} />
 
-function stringifyAnswer(
-  value: unknown,
-): string {
-  if (
-    typeof value === "string"
-  ) {
-    return value;
-  }
+        <div>
+          <h3>Order History</h3>
 
-  if (
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return String(value);
-  }
+          <p>
+            Status, routing and pickup events for this
+            order.
+          </p>
+        </div>
+      </section>
 
-  if (Array.isArray(value)) {
-    return value
-      .map(stringifyAnswer)
-      .join(", ");
-  }
+      {events.length === 0 ? (
+        <div className={styles.historyEmpty}>
+          No history is available for this order.
+        </div>
+      ) : (
+        <div className={styles.timeline}>
+          {events.map((event) => (
+            <div
+              key={event.key}
+              className={styles.timelineItem}
+            >
+              <div className={styles.timelineMarker}>
+                {event.type === "STATUS" ? (
+                  <ClipboardCheck size={17} />
+                ) : event.type === "ASSIGNMENT" ? (
+                  <UsersRound size={17} />
+                ) : (
+                  <CalendarDays size={17} />
+                )}
+              </div>
 
-  if (
-    value &&
-    typeof value === "object"
-  ) {
-    const object =
-      value as Record<
-        string,
-        unknown
-      >;
+              <div className={styles.timelineContent}>
+                <div className={styles.timelineTop}>
+                  <strong>{event.title}</strong>
 
-    return (
-      firstText(object, [
-        "label",
-        "text",
-        "name",
-        "value",
-      ]) ||
-      JSON.stringify(value)
-    );
-  }
+                  <time>
+                    {formatDateTime(event.date)}
+                  </time>
+                </div>
 
-  return "—";
+                <p>{event.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

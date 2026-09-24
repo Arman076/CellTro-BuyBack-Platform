@@ -7,12 +7,35 @@ export type DateFilter =
   | "LAST_7_DAYS"
   | "LAST_30_DAYS";
 
+export type StatusGroup =
+  | "ALL"
+  | "PENDING"
+  | "IN_PROCESS"
+  | "COMPLETED"
+  | "CANCELLED";
+
+export type PickupSlot = {
+  code: string;
+  label: string;
+  startTime: string;
+  endTime: string;
+} | null;
+
+export type OrderAddress = {
+  house: string;
+  street: string;
+  locality: string;
+  landmark: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+};
+
 export type VendorOrder = {
   id: string;
   orderNumber: string;
 
   productName: string;
-  productImage: string | null;
   variantLabel: string;
 
   finalPrice: string | number;
@@ -20,25 +43,14 @@ export type VendorOrder = {
   status: string;
 
   pickupDate: string;
-
-  pickupSlot: {
-    code: string;
-    label: string;
-    startTime: string;
-    endTime: string;
-  } | null;
+  pickupSlot: PickupSlot;
 
   customer: {
     name: string;
     phone: string;
   } | null;
 
-  location: {
-    locality: string;
-    city: string;
-    state: string;
-    pincode: string;
-  } | null;
+  address: OrderAddress | null;
 
   assignment: {
     id: number;
@@ -46,6 +58,8 @@ export type VendorOrder = {
     reason: string;
     assignedAt: string;
   } | null;
+
+  agent: null;
 
   createdAt: string;
   updatedAt: string;
@@ -64,46 +78,52 @@ export type VendorOrdersResponse = {
   filters?: {
     dateFilter: DateFilter;
     status: string;
+    statusGroup: StatusGroup;
     search: string;
   };
 };
 
-export type VendorDashboardOrder = {
-  id: string;
-  orderNumber: string;
+export type DeviceReportAnswer = {
+  id: number;
+  label: string;
+  value: string;
+  issueCode: string | null;
+  severity: string;
+  parentOptionId: number | null;
 
-  productName: string;
-  productImage: string | null;
-  variantLabel: string;
-
-  finalPrice: string | number;
-
-  status: string;
-  pickupDate: string;
-
-  customerName: string | null;
-
-  location: {
-    city: string;
-    pincode: string;
+  issueGroup: {
+    id: number;
+    name: string;
   } | null;
 
-  assignedAt: string | null;
-  createdAt: string;
+  selectionType:
+    | "PRIMARY"
+    | "OPTION"
+    | "CHILD";
 };
 
-export type VendorDashboardResponse = {
-  dateFilter?: DateFilter;
+export type DeviceReportCheck = {
+  itemId: number;
+  name: string;
+  question: string;
+  answerType: string;
+  selectedAnswers: DeviceReportAnswer[];
+};
 
-  totalAssigned: number;
+export type DeviceReportSection = {
+  id: number;
+  name: string;
+  checks: DeviceReportCheck[];
+};
 
-  statusCounts: Record<
-    string,
-    number
-  >;
+export type DeviceReport = {
+  available: boolean;
 
-  recentOrders:
-    VendorDashboardOrder[];
+  historicalLabelsResolved: boolean;
+
+  perAnswerDeductionAvailable: boolean;
+
+  sections: DeviceReportSection[];
 };
 
 export type VendorOrderDetails = {
@@ -114,7 +134,6 @@ export type VendorOrderDetails = {
     id: number;
     variantId: number;
     name: string;
-    image: string | null;
     variant: string;
   };
 
@@ -126,17 +145,13 @@ export type VendorOrderDetails = {
 
   questionnaire: unknown;
 
+  deviceReport: DeviceReport;
+
   status: string;
 
   pickup: {
     date: string;
-
-    slot: {
-      code: string;
-      label: string;
-      startTime: string;
-      endTime: string;
-    } | null;
+    slot: PickupSlot;
   };
 
   payout: {
@@ -173,29 +188,20 @@ export type VendorOrderDetails = {
 
   reschedules: Array<{
     id: number;
-
     oldPickupDate: string;
     newPickupDate: string;
-
     oldSlotLabel: string;
     newSlotLabel: string;
-
     createdAt: string;
   }>;
 
   assignmentHistory: Array<{
     id: number;
-
     source: string;
     reason: string;
-
     assignedAt: string;
-
     unassignedAt: string | null;
-
-    unassignmentReason:
-      | string
-      | null;
+    unassignmentReason: string | null;
   }>;
 
   agent: null;
@@ -204,17 +210,54 @@ export type VendorOrderDetails = {
   updatedAt: string;
 };
 
-export async function getVendorOrders(
-  params?: {
-    page?: number;
-    limit?: number;
-    search?: string;
-    status?: string;
-    dateFilter?: DateFilter;
-  },
-) {
-  const query =
-    new URLSearchParams();
+export type VendorDashboardOrder = {
+  id: string;
+  orderNumber: string;
+  productName: string;
+  variantLabel: string;
+  finalPrice: string | number;
+  status: string;
+
+  pickupDate: string;
+  pickupSlotLabel: string | null;
+
+  customerName: string | null;
+
+  location: {
+    city: string;
+    pincode: string;
+  } | null;
+
+  assignedAt: string | null;
+  createdAt: string;
+};
+
+export type VendorDashboardResponse = {
+  dateFilter: DateFilter;
+
+  totalAssigned: number;
+
+  statusCounts: Record<string, number>;
+
+  statusGroups: {
+    pending: number;
+    inProcess: number;
+    completed: number;
+    cancelled: number;
+  };
+
+  recentOrders: VendorDashboardOrder[];
+};
+
+export async function getVendorOrders(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  status?: string;
+  statusGroup?: StatusGroup;
+  dateFilter?: DateFilter;
+}) {
+  const query = new URLSearchParams();
 
   query.set(
     "page",
@@ -236,7 +279,17 @@ export async function getVendorOrders(
   if (params?.status?.trim()) {
     query.set(
       "status",
-      params.status,
+      params.status.trim(),
+    );
+  }
+
+  if (
+    params?.statusGroup &&
+    params.statusGroup !== "ALL"
+  ) {
+    query.set(
+      "statusGroup",
+      params.statusGroup,
     );
   }
 
@@ -255,11 +308,20 @@ export async function getVendorOrders(
   );
 }
 
+export async function getVendorOrder(
+  orderNumber: string,
+) {
+  return vendorApi<VendorOrderDetails>(
+    `/vendor-orders/${encodeURIComponent(
+      orderNumber,
+    )}`,
+  );
+}
+
 export async function getVendorDashboard(
   dateFilter: DateFilter = "ALL",
 ) {
-  const query =
-    new URLSearchParams();
+  const query = new URLSearchParams();
 
   if (dateFilter !== "ALL") {
     query.set(
@@ -269,22 +331,12 @@ export async function getVendorDashboard(
   }
 
   const suffix =
-    query.toString()
+    query.size > 0
       ? `?${query.toString()}`
       : "";
 
   return vendorApi<VendorDashboardResponse>(
     `/vendor-orders/dashboard${suffix}`,
-  );
-}
-
-export async function getVendorOrder(
-  orderNumber: string,
-) {
-  return vendorApi<VendorOrderDetails>(
-    `/vendor-orders/${encodeURIComponent(
-      orderNumber,
-    )}`,
   );
 }
 
@@ -318,12 +370,16 @@ export function formatDate(
     | null
     | undefined,
 ) {
-  if (!value) return "—";
+  if (!value) {
+    return "—";
+  }
 
   const date = new Date(value);
 
   if (
-    Number.isNaN(date.getTime())
+    Number.isNaN(
+      date.getTime(),
+    )
   ) {
     return "—";
   }
@@ -334,7 +390,8 @@ export function formatDate(
       day: "2-digit",
       month: "short",
       year: "numeric",
-      timeZone: "Asia/Kolkata",
+      timeZone:
+        "Asia/Kolkata",
     },
   ).format(date);
 }
@@ -345,12 +402,16 @@ export function formatDateTime(
     | null
     | undefined,
 ) {
-  if (!value) return "—";
+  if (!value) {
+    return "—";
+  }
 
   const date = new Date(value);
 
   if (
-    Number.isNaN(date.getTime())
+    Number.isNaN(
+      date.getTime(),
+    )
   ) {
     return "—";
   }
@@ -363,7 +424,8 @@ export function formatDateTime(
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-      timeZone: "Asia/Kolkata",
+      timeZone:
+        "Asia/Kolkata",
     },
   ).format(date);
 }
@@ -377,10 +439,38 @@ export function formatStatus(
     .filter(Boolean)
     .map(
       (part) =>
-        part.charAt(0).toUpperCase() +
+        part
+          .charAt(0)
+          .toUpperCase() +
         part.slice(1),
     )
     .join(" ");
+}
+
+export function formatAddress(
+  address:
+    | Partial<OrderAddress>
+    | null
+    | undefined,
+) {
+  if (!address) {
+    return "Address unavailable";
+  }
+
+  return [
+    address.house,
+    address.street,
+    address.locality,
+    address.landmark,
+    address.city,
+    address.state,
+    address.pincode,
+  ]
+    .map((value) =>
+      String(value ?? "").trim(),
+    )
+    .filter(Boolean)
+    .join(", ");
 }
 
 export function dateFilterLabel(

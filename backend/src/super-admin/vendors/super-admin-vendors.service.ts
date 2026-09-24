@@ -1,12 +1,13 @@
 import crypto from "node:crypto";
+
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 
 import {
+  SellOrderStatus,
   VendorStatus,
 } from "../../generated/prisma/enums.js";
 
@@ -57,7 +58,8 @@ export class SuperAdminVendorsService {
     fieldName: string,
     maxLength: number,
   ) {
-    const text = String(value ?? "").trim();
+    const text =
+      String(value ?? "").trim();
 
     if (!text) {
       throw new BadRequestException(
@@ -77,8 +79,9 @@ export class SuperAdminVendorsService {
   private normalizePhone(
     value: unknown,
   ) {
-    const digits = String(value ?? "")
-      .replace(/\D/g, "");
+    const digits =
+      String(value ?? "")
+        .replace(/\D/g, "");
 
     const phone =
       digits.length === 12 &&
@@ -109,7 +112,9 @@ export class SuperAdminVendorsService {
 
     if (
       email.length > 254 ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        email,
+      )
     ) {
       throw new BadRequestException(
         "Enter a valid email address.",
@@ -128,7 +133,9 @@ export class SuperAdminVendorsService {
         .toUpperCase();
 
     if (
-      !Object.values(VendorStatus).includes(
+      !Object.values(
+        VendorStatus,
+      ).includes(
         status as VendorStatus,
       )
     ) {
@@ -140,10 +147,61 @@ export class SuperAdminVendorsService {
     return status as VendorStatus;
   }
 
+  private parseOrderStatus(
+    value: unknown,
+  ): SellOrderStatus | undefined {
+    const status =
+      String(value ?? "")
+        .trim()
+        .toUpperCase();
+
+    if (!status) {
+      return undefined;
+    }
+
+    if (
+      !Object.values(
+        SellOrderStatus,
+      ).includes(
+        status as SellOrderStatus,
+      )
+    ) {
+      throw new BadRequestException(
+        "Invalid order status.",
+      );
+    }
+
+    return status as SellOrderStatus;
+  }
+
   private vendorCode(
     id: number,
   ) {
-    return `VEN-${String(id).padStart(6, "0")}`;
+    return `VEN-${String(id).padStart(
+      6,
+      "0",
+    )}`;
+  }
+
+  private async ensureVendorExists(
+    vendorId: number,
+  ) {
+    const vendor =
+      await this.prisma.vendor.findUnique({
+        where: {
+          id: vendorId,
+        },
+
+        select: {
+          id: true,
+        },
+      });
+
+    if (!vendor) {
+      throw new NotFoundException(
+        "Vendor not found.",
+      );
+    }
   }
 
   async list(
@@ -154,18 +212,23 @@ export class SuperAdminVendorsService {
       limit?: unknown;
     },
   ) {
-    const page = Math.max(
-      1,
-      Number(query.page) || 1,
-    );
+    const page =
+      Math.max(
+        1,
+        Number(query.page) || 1,
+      );
 
     const requestedLimit =
       Number(query.limit) || 20;
 
-    const limit = Math.min(
-      100,
-      Math.max(1, requestedLimit),
-    );
+    const limit =
+      Math.min(
+        100,
+        Math.max(
+          1,
+          requestedLimit,
+        ),
+      );
 
     const search =
       String(query.search ?? "")
@@ -174,12 +237,16 @@ export class SuperAdminVendorsService {
 
     const status =
       query.status
-        ? this.parseStatus(query.status)
+        ? this.parseStatus(
+            query.status,
+          )
         : undefined;
 
     const where = {
       ...(status
-        ? { status }
+        ? {
+            status,
+          }
         : {}),
 
       ...(search
@@ -188,19 +255,22 @@ export class SuperAdminVendorsService {
               {
                 vendorCode: {
                   contains: search,
-                  mode: "insensitive" as const,
+                  mode:
+                    "insensitive" as const,
                 },
               },
               {
                 businessName: {
                   contains: search,
-                  mode: "insensitive" as const,
+                  mode:
+                    "insensitive" as const,
                 },
               },
               {
                 contactName: {
                   contains: search,
-                  mode: "insensitive" as const,
+                  mode:
+                    "insensitive" as const,
                 },
               },
               {
@@ -211,7 +281,8 @@ export class SuperAdminVendorsService {
               {
                 email: {
                   contains: search,
-                  mode: "insensitive" as const,
+                  mode:
+                    "insensitive" as const,
                 },
               },
             ],
@@ -222,99 +293,564 @@ export class SuperAdminVendorsService {
     const [
       vendors,
       total,
-      totalVendors,
-      activeVendors,
-    ] = await this.prisma.$transaction([
-      this.prisma.vendor.findMany({
-        where,
+      statusCounts,
+      orderCounts,
+    ] =
+      await this.prisma.$transaction([
+        this.prisma.vendor.findMany({
+          where,
 
-        skip:
-          (page - 1) * limit,
+          skip:
+            (page - 1) * limit,
 
-        take:
-          limit,
+          take:
+            limit,
 
-        orderBy: [
-          {
-            createdAt:
-              "desc",
-          },
-          {
-            id:
-              "desc",
-          },
-        ],
+          orderBy: [
+            {
+              createdAt: "desc",
+            },
+            {
+              id: "desc",
+            },
+          ],
 
-        select: {
-          id: true,
-          vendorCode: true,
-          businessName: true,
-          contactName: true,
-          phone: true,
-          email: true,
-          status: true,
-          createdAt: true,
-          updatedAt: true,
+          select: {
+            id: true,
+            vendorCode: true,
+            businessName: true,
+            contactName: true,
+            phone: true,
+            email: true,
+            status: true,
+            createdAt: true,
+            updatedAt: true,
 
-          _count: {
-            select: {
-              serviceAreas: {
-                where: {
-                  isActive:
-                    true,
+            _count: {
+              select: {
+                serviceAreas: {
+                  where: {
+                    isActive: true,
+                  },
                 },
               },
             },
           },
-        },
-      }),
+        }),
 
-      this.prisma.vendor.count({
-        where,
-      }),
+        this.prisma.vendor.count({
+          where,
+        }),
 
-      this.prisma.vendor.count(),
+        this.prisma.vendor.groupBy({
+          by: ["status"],
 
-      this.prisma.vendor.count({
-        where: {
-          status:
-            VendorStatus.ACTIVE,
-        },
-      }),
-    ]);
+          _count: {
+            _all: true,
+          },
+        }),
+
+        this.prisma.sellOrder.groupBy({
+          by: [
+            "currentVendorId",
+            "status",
+          ],
+
+          where: {
+            currentVendorId: {
+              not: null,
+            },
+          },
+
+          _count: {
+            _all: true,
+          },
+        }),
+      ]);
+
+    const vendorPerformance =
+      new Map<
+        number,
+        {
+          routedOrders: number;
+          completedOrders: number;
+        }
+      >();
+
+    let ordersRouted = 0;
+    let completedOrders = 0;
+
+    for (const row of orderCounts) {
+      if (
+        row.currentVendorId === null
+      ) {
+        continue;
+      }
+
+      const count =
+        row._count._all;
+
+      ordersRouted += count;
+
+      const current =
+        vendorPerformance.get(
+          row.currentVendorId,
+        ) ?? {
+          routedOrders: 0,
+          completedOrders: 0,
+        };
+
+      current.routedOrders +=
+        count;
+
+      if (
+        row.status ===
+        SellOrderStatus.COMPLETED
+      ) {
+        current.completedOrders +=
+          count;
+
+        completedOrders +=
+          count;
+      }
+
+      vendorPerformance.set(
+        row.currentVendorId,
+        current,
+      );
+    }
+
+    const statusSummary = {
+      totalVendors: 0,
+      activeVendors: 0,
+      inactiveVendors: 0,
+      suspendedVendors: 0,
+    };
+
+    for (
+      const row of statusCounts
+    ) {
+      const count =
+        row._count._all;
+
+      statusSummary.totalVendors +=
+        count;
+
+      if (
+        row.status ===
+        VendorStatus.ACTIVE
+      ) {
+        statusSummary.activeVendors =
+          count;
+      }
+
+      if (
+        row.status ===
+        VendorStatus.INACTIVE
+      ) {
+        statusSummary.inactiveVendors =
+          count;
+      }
+
+      if (
+        row.status ===
+        VendorStatus.SUSPENDED
+      ) {
+        statusSummary.suspendedVendors =
+          count;
+      }
+    }
 
     return {
-      data:
-        vendors.map(
-          ({
-            _count,
-            ...vendor
-          }) => ({
+      data: vendors.map(
+        ({
+          _count,
+          ...vendor
+        }) => {
+          const performance =
+            vendorPerformance.get(
+              vendor.id,
+            ) ?? {
+              routedOrders: 0,
+              completedOrders: 0,
+            };
+
+          return {
             ...vendor,
 
             serviceAreaCount:
               _count.serviceAreas,
-          }),
-        ),
+
+            performance: {
+              ...performance,
+
+              completionRate:
+                performance
+                  .routedOrders > 0
+                  ? Number(
+                      (
+                        (
+                          performance
+                            .completedOrders /
+                          performance
+                            .routedOrders
+                        ) *
+                        100
+                      ).toFixed(1),
+                    )
+                  : null,
+            },
+          };
+        },
+      ),
 
       pagination: {
         page,
         limit,
         total,
+
         totalPages:
-          Math.ceil(total / limit),
+          Math.ceil(
+            total / limit,
+          ),
       },
 
       summary: {
-        totalVendors,
-        activeVendors,
+        ...statusSummary,
+        ordersRouted,
+        completedOrders,
 
-        /*
-         * Order routing has not been implemented yet.
-         * Never return a fake 0 for routed orders.
-         */
-        ordersRouted:
-          null,
+        completionRate:
+          ordersRouted > 0
+            ? Number(
+                (
+                  (
+                    completedOrders /
+                    ordersRouted
+                  ) *
+                  100
+                ).toFixed(1),
+              )
+            : null,
+      },
+    };
+  }
+
+  async getKpis(
+    idInput: unknown,
+  ) {
+    const vendorId =
+      this.parsePositiveInt(
+        idInput,
+        "vendor id",
+      );
+
+    await this.ensureVendorExists(
+      vendorId,
+    );
+
+    const [
+      statusGroups,
+      completedFinancials,
+    ] =
+      await this.prisma.$transaction([
+        this.prisma.sellOrder.groupBy({
+          by: ["status"],
+
+          where: {
+            currentVendorId:
+              vendorId,
+          },
+
+          _count: {
+            _all: true,
+          },
+        }),
+
+        this.prisma.sellOrder.aggregate({
+          where: {
+            currentVendorId:
+              vendorId,
+
+            status:
+              SellOrderStatus.COMPLETED,
+          },
+
+          _sum: {
+            finalPrice: true,
+          },
+
+          _avg: {
+            finalPrice: true,
+          },
+        }),
+      ]);
+
+    const statusCounts =
+      new Map<
+        SellOrderStatus,
+        number
+      >();
+
+    for (
+      const row of statusGroups
+    ) {
+      statusCounts.set(
+        row.status,
+        row._count._all,
+      );
+    }
+
+    const getCount = (
+      status: SellOrderStatus,
+    ) =>
+      statusCounts.get(status) ??
+      0;
+
+    const pending =
+      getCount(
+        SellOrderStatus.PICKUP_REQUESTED,
+      );
+
+    const inProgress =
+      getCount(
+        SellOrderStatus.PICKUP_CONFIRMED,
+      ) +
+      getCount(
+        SellOrderStatus.PICKUP_STARTED,
+      ) +
+      getCount(
+        SellOrderStatus
+          .INSPECTION_COMPLETED,
+      ) +
+      getCount(
+        SellOrderStatus
+          .PAYMENT_COMPLETED,
+      );
+
+    const completed =
+      getCount(
+        SellOrderStatus.COMPLETED,
+      );
+
+    const cancelled =
+      getCount(
+        SellOrderStatus.CANCELLED,
+      );
+
+    const total =
+      pending +
+      inProgress +
+      completed +
+      cancelled;
+
+    return {
+      vendorId,
+
+      orders: {
+        total,
+        pending,
+        inProgress,
+        completed,
+        cancelled,
+      },
+
+      completionRate:
+        total > 0
+          ? Number(
+              (
+                (completed /
+                  total) *
+                100
+              ).toFixed(1),
+            )
+          : null,
+
+      financials: {
+        totalPurchaseValue:
+          Number(
+            completedFinancials
+              ._sum
+              .finalPrice ?? 0,
+          ),
+
+        averageOrderValue:
+          completedFinancials
+            ._avg
+            .finalPrice === null
+            ? null
+            : Number(
+                completedFinancials
+                  ._avg
+                  .finalPrice,
+              ),
+      },
+    };
+  }
+
+  async getOrders(
+    vendorIdInput: unknown,
+    query: {
+      page?: unknown;
+      limit?: unknown;
+      status?: unknown;
+      search?: unknown;
+    },
+  ) {
+    const vendorId =
+      this.parsePositiveInt(
+        vendorIdInput,
+        "vendor id",
+      );
+
+    const page =
+      Math.max(
+        1,
+        Number(query.page) || 1,
+      );
+
+    const requestedLimit =
+      Number(query.limit) || 20;
+
+    const limit =
+      Math.min(
+        50,
+        Math.max(
+          1,
+          requestedLimit,
+        ),
+      );
+
+    const status =
+      this.parseOrderStatus(
+        query.status,
+      );
+
+    const search =
+      String(query.search ?? "")
+        .trim()
+        .slice(0, 100);
+
+    await this.ensureVendorExists(
+      vendorId,
+    );
+
+    const where = {
+      currentVendorId:
+        vendorId,
+
+      ...(status
+        ? {
+            status,
+          }
+        : {}),
+
+      ...(search
+        ? {
+            OR: [
+              {
+                orderNumber: {
+                  contains: search,
+                  mode:
+                    "insensitive" as const,
+                },
+              },
+
+              {
+                productName: {
+                  contains: search,
+                  mode:
+                    "insensitive" as const,
+                },
+              },
+
+              {
+                variantLabel: {
+                  contains: search,
+                  mode:
+                    "insensitive" as const,
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [
+      orders,
+      total,
+    ] =
+      await this.prisma.$transaction([
+        this.prisma.sellOrder.findMany({
+          where,
+
+          skip:
+            (page - 1) *
+            limit,
+
+          take:
+            limit,
+
+          orderBy: [
+            {
+              createdAt:
+                "desc",
+            },
+            {
+              id: "desc",
+            },
+          ],
+
+          select: {
+            id: true,
+            orderNumber: true,
+            productName: true,
+            productImage: true,
+            variantLabel: true,
+            finalPrice: true,
+            status: true,
+            pickupDate: true,
+            createdAt: true,
+            updatedAt: true,
+
+            addressSnapshot: {
+              select: {
+                fullName: true,
+                phone: true,
+                pincode: true,
+                city: true,
+                state: true,
+              },
+            },
+          },
+        }),
+
+        this.prisma.sellOrder.count({
+          where,
+        }),
+      ]);
+
+    return {
+      data: orders.map(
+        (order) => ({
+          ...order,
+
+          finalPrice:
+            Number(
+              order.finalPrice,
+            ),
+        }),
+      ),
+
+      pagination: {
+        page,
+        limit,
+        total,
+
+        totalPages:
+          Math.ceil(
+            total / limit,
+          ),
       },
     };
   }
@@ -347,19 +883,16 @@ export class SuperAdminVendorsService {
 
           serviceAreas: {
             where: {
-              isActive:
-                true,
+              isActive: true,
             },
 
             orderBy: [
               {
-                priority:
-                  "asc",
+                priority: "asc",
               },
               {
                 serviceablePincode: {
-                  pincode:
-                    "asc",
+                  pincode: "asc",
                 },
               },
             ],
@@ -395,15 +928,6 @@ export class SuperAdminVendorsService {
       summary: {
         serviceAreas:
           vendor.serviceAreas.length,
-
-        totalOrders:
-          null,
-
-        completedOrders:
-          null,
-
-        successRate:
-          null,
       },
     };
   }
@@ -435,10 +959,6 @@ export class SuperAdminVendorsService {
         input.email,
       );
 
-    /*
-     * Create first, then derive vendorCode from the DB-generated id.
-     * This avoids count()+1 race conditions.
-     */
     return this.prisma.$transaction(
       async (tx) => {
         const vendor =
@@ -499,22 +1019,9 @@ export class SuperAdminVendorsService {
         "vendor id",
       );
 
-    const existing =
-      await this.prisma.vendor.findUnique({
-        where: {
-          id,
-        },
-
-        select: {
-          id: true,
-        },
-      });
-
-    if (!existing) {
-      throw new NotFoundException(
-        "Vendor not found.",
-      );
-    }
+    await this.ensureVendorExists(
+      id,
+    );
 
     const data: {
       businessName?: string;
@@ -612,22 +1119,9 @@ export class SuperAdminVendorsService {
         statusInput,
       );
 
-    const existing =
-      await this.prisma.vendor.findUnique({
-        where: {
-          id,
-        },
-
-        select: {
-          id: true,
-        },
-      });
-
-    if (!existing) {
-      throw new NotFoundException(
-        "Vendor not found.",
-      );
-    }
+    await this.ensureVendorExists(
+      id,
+    );
 
     return this.prisma.vendor.update({
       where: {
@@ -647,233 +1141,211 @@ export class SuperAdminVendorsService {
       },
     });
   }
+
   async getAvailableServiceAreas(
-  vendorIdInput: unknown,
-  searchInput?: unknown,
-) {
-  const vendorId =
-    this.parsePositiveInt(
-      vendorIdInput,
-      "vendor id",
-    );
-
-  const vendor =
-    await this.prisma.vendor.findUnique({
-      where: {
-        id: vendorId,
-      },
-
-      select: {
-        id: true,
-      },
-    });
-
-  if (!vendor) {
-    throw new NotFoundException(
-      "Vendor not found.",
-    );
-  }
-
-  const search =
-    String(searchInput ?? "")
-      .trim()
-      .replace(/\D/g, "")
-      .slice(0, 6);
-
-  const areas =
-    await this.prisma.serviceablePincode.findMany({
-      where: {
-        isActive: true,
-
-        ...(search
-          ? {
-              pincode: {
-                startsWith: search,
-              },
-            }
-          : {}),
-      },
-
-      orderBy: {
-        pincode: "asc",
-      },
-
-      take: 200,
-
-      select: {
-        id: true,
-        pincode: true,
-        district: true,
-        state: true,
-
-        vendorMappings: {
-          where: {
-            vendorId,
-          },
-
-          take: 1,
-
-          select: {
-            id: true,
-            priority: true,
-            isActive: true,
-          },
-        },
-      },
-    });
-
-  return areas.map((area) => {
-    const mapping =
-      area.vendorMappings[0] ?? null;
-
-    return {
-      id: area.id,
-      pincode: area.pincode,
-      district: area.district,
-      state: area.state,
-
-      mapped:
-        mapping?.isActive === true,
-
-      priority:
-        mapping?.priority ?? null,
-    };
-  });
-}
-
-async replaceServiceAreas(
-  vendorIdInput: unknown,
-  body: {
-    areas?: unknown;
-  },
-) {
-  const vendorId =
-    this.parsePositiveInt(
-      vendorIdInput,
-      "vendor id",
-    );
-
-  if (!Array.isArray(body.areas)) {
-    throw new BadRequestException(
-      "areas must be an array.",
-    );
-  }
-
-  if (body.areas.length > 500) {
-    throw new BadRequestException(
-      "A maximum of 500 service areas can be updated at once.",
-    );
-  }
-
-  const normalized = new Map<
-    number,
-    number
-  >();
-
-  for (const item of body.areas) {
-    if (
-      !item ||
-      typeof item !== "object"
-    ) {
-      throw new BadRequestException(
-        "Invalid service area.",
-      );
-    }
-
-    const raw =
-      item as {
-        serviceablePincodeId?: unknown;
-        priority?: unknown;
-      };
-
-    const serviceablePincodeId =
+    vendorIdInput: unknown,
+    searchInput?: unknown,
+  ) {
+    const vendorId =
       this.parsePositiveInt(
-        raw.serviceablePincodeId,
-        "serviceable pincode id",
+        vendorIdInput,
+        "vendor id",
       );
 
-    const priority =
-      raw.priority === undefined
-        ? 100
-        : Number(raw.priority);
-
-    if (
-      !Number.isInteger(priority) ||
-      priority < 1 ||
-      priority > 10000
-    ) {
-      throw new BadRequestException(
-        "Priority must be between 1 and 10000.",
-      );
-    }
-
-    /*
-     * Same pincode appearing twice in the request
-     * is rejected instead of silently overwriting it.
-     */
-    if (
-      normalized.has(
-        serviceablePincodeId,
-      )
-    ) {
-      throw new BadRequestException(
-        "Duplicate serviceable pincode in request.",
-      );
-    }
-
-    normalized.set(
-      serviceablePincodeId,
-      priority,
+    await this.ensureVendorExists(
+      vendorId,
     );
-  }
 
-  const requestedIds =
-    [...normalized.keys()];
+    const search =
+      String(searchInput ?? "")
+        .trim()
+        .replace(/\D/g, "")
+        .slice(0, 6);
 
-  return this.prisma.$transaction(
-    async (tx) => {
-      /*
-       * Serialize mapping updates for the same vendor.
-       * ::text avoids adapter-pg void deserialization.
-       */
-      await tx.$queryRaw<
-        Array<{
-          lock_result:
-            string | null;
-        }>
-      >`
-        SELECT pg_advisory_xact_lock(
-          hashtext(${`celltro-vendor-service-area:${vendorId}`})
-        )::text AS lock_result
-      `;
-
-      const vendor =
-        await tx.vendor.findUnique({
+    const areas =
+      await this.prisma
+        .serviceablePincode
+        .findMany({
           where: {
-            id: vendorId,
+            isActive: true,
+
+            ...(search
+              ? {
+                  pincode: {
+                    startsWith:
+                      search,
+                  },
+                }
+              : {}),
           },
+
+          orderBy: {
+            pincode: "asc",
+          },
+
+          take: 200,
 
           select: {
             id: true,
+            pincode: true,
+            district: true,
+            state: true,
+
+            vendorMappings: {
+              where: {
+                vendorId,
+              },
+
+              take: 1,
+
+              select: {
+                id: true,
+                priority: true,
+                isActive: true,
+              },
+            },
           },
         });
 
-      if (!vendor) {
-        throw new NotFoundException(
-          "Vendor not found.",
+    return areas.map(
+      (area) => {
+        const mapping =
+          area.vendorMappings[0] ??
+          null;
+
+        return {
+          id: area.id,
+          pincode: area.pincode,
+          district: area.district,
+          state: area.state,
+
+          mapped:
+            mapping?.isActive ===
+            true,
+
+          priority:
+            mapping?.priority ??
+            null,
+        };
+      },
+    );
+  }
+
+  async replaceServiceAreas(
+    vendorIdInput: unknown,
+    body: {
+      areas?: unknown;
+    },
+  ) {
+    const vendorId =
+      this.parsePositiveInt(
+        vendorIdInput,
+        "vendor id",
+      );
+
+    if (
+      !Array.isArray(
+        body.areas,
+      )
+    ) {
+      throw new BadRequestException(
+        "areas must be an array.",
+      );
+    }
+
+    if (
+      body.areas.length > 500
+    ) {
+      throw new BadRequestException(
+        "A maximum of 500 service areas can be updated at once.",
+      );
+    }
+
+    const normalized =
+      new Map<
+        number,
+        number
+      >();
+
+    for (
+      const item of body.areas
+    ) {
+      if (
+        !item ||
+        typeof item !== "object"
+      ) {
+        throw new BadRequestException(
+          "Invalid service area.",
         );
       }
 
-      if (requestedIds.length > 0) {
-        const validPincodes =
-          await tx.serviceablePincode.findMany({
-            where: {
-              id: {
-                in: requestedIds,
-              },
+      const raw =
+        item as {
+          serviceablePincodeId?: unknown;
+          priority?: unknown;
+        };
 
-              isActive:
-                true,
+      const serviceablePincodeId =
+        this.parsePositiveInt(
+          raw.serviceablePincodeId,
+          "serviceable pincode id",
+        );
+
+      const priority =
+        raw.priority === undefined
+          ? 100
+          : Number(
+              raw.priority,
+            );
+
+      if (
+        !Number.isInteger(
+          priority,
+        ) ||
+        priority < 1 ||
+        priority > 10000
+      ) {
+        throw new BadRequestException(
+          "Priority must be between 1 and 10000.",
+        );
+      }
+
+      if (
+        normalized.has(
+          serviceablePincodeId,
+        )
+      ) {
+        throw new BadRequestException(
+          "Duplicate serviceable pincode in request.",
+        );
+      }
+
+      normalized.set(
+        serviceablePincodeId,
+        priority,
+      );
+    }
+
+    const requestedIds =
+      [...normalized.keys()];
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw<
+          Array<{
+            lock_result:
+              string | null;
+          }>
+        >`
+          SELECT pg_advisory_xact_lock(
+            hashtext(${`celltro-vendor-service-area:${vendorId}`})
+          )::text AS lock_result
+        `;
+
+        const vendor =
+          await tx.vendor.findUnique({
+            where: {
+              id: vendorId,
             },
 
             select: {
@@ -881,120 +1353,149 @@ async replaceServiceAreas(
             },
           });
 
-        if (
-          validPincodes.length !==
-          requestedIds.length
-        ) {
-          throw new BadRequestException(
-            "One or more selected pincodes are invalid or inactive.",
+        if (!vendor) {
+          throw new NotFoundException(
+            "Vendor not found.",
           );
         }
-      }
 
-      /*
-       * Existing mappings are retained for audit/data integrity,
-       * but mappings removed from the selection become inactive.
-       */
-      await tx.vendorServiceArea.updateMany({
-        where: {
-          vendorId,
+        if (
+          requestedIds.length >
+          0
+        ) {
+          const validPincodes =
+            await tx
+              .serviceablePincode
+              .findMany({
+                where: {
+                  id: {
+                    in:
+                      requestedIds,
+                  },
 
-          ...(requestedIds.length
-            ? {
-                serviceablePincodeId: {
-                  notIn:
-                    requestedIds,
+                  isActive:
+                    true,
                 },
-              }
-            : {}),
-        },
 
-        data: {
-          isActive:
-            false,
-        },
-      });
+                select: {
+                  id: true,
+                },
+              });
 
-      /*
-       * Prisma does not provide bulk upsert.
-       * This loop stays inside one transaction and is capped at 500.
-       *
-       * This is an admin write path, not customer request traffic.
-       * Customer serviceability remains completely independent.
-       */
-      for (
-        const [
-          serviceablePincodeId,
-          priority,
-        ] of normalized
-      ) {
-        await tx.vendorServiceArea.upsert({
-          where: {
-            vendorId_serviceablePincodeId: {
+          if (
+            validPincodes.length !==
+            requestedIds.length
+          ) {
+            throw new BadRequestException(
+              "One or more selected pincodes are invalid or inactive.",
+            );
+          }
+        }
+
+        await tx
+          .vendorServiceArea
+          .updateMany({
+            where: {
               vendorId,
-              serviceablePincodeId,
-            },
-          },
 
-          create: {
-            vendorId,
+              ...(requestedIds.length
+                ? {
+                    serviceablePincodeId:
+                      {
+                        notIn:
+                          requestedIds,
+                      },
+                  }
+                : {}),
+            },
+
+            data: {
+              isActive:
+                false,
+            },
+          });
+
+        for (
+          const [
             serviceablePincodeId,
             priority,
-            isActive:
-              true,
-          },
-
-          update: {
-            priority,
-            isActive:
-              true,
-          },
-        });
-      }
-
-      const mappings =
-        await tx.vendorServiceArea.findMany({
-          where: {
-            vendorId,
-            isActive:
-              true,
-          },
-
-          orderBy: [
-            {
-              priority:
-                "asc",
-            },
-            {
-              serviceablePincode: {
-                pincode:
-                  "asc",
+          ] of normalized
+        ) {
+          await tx
+            .vendorServiceArea
+            .upsert({
+              where: {
+                vendorId_serviceablePincodeId:
+                  {
+                    vendorId,
+                    serviceablePincodeId,
+                  },
               },
-            },
-          ],
 
-          select: {
-            id: true,
-            priority: true,
+              create: {
+                vendorId,
+                serviceablePincodeId,
+                priority,
+                isActive:
+                  true,
+              },
 
-            serviceablePincode: {
+              update: {
+                priority,
+                isActive:
+                  true,
+              },
+            });
+        }
+
+        const mappings =
+          await tx
+            .vendorServiceArea
+            .findMany({
+              where: {
+                vendorId,
+                isActive:
+                  true,
+              },
+
+              orderBy: [
+                {
+                  priority:
+                    "asc",
+                },
+                {
+                  serviceablePincode:
+                    {
+                      pincode:
+                        "asc",
+                    },
+                },
+              ],
+
               select: {
                 id: true,
-                pincode: true,
-                district: true,
-                state: true,
-              },
-            },
-          },
-        });
+                priority: true,
 
-      return {
-        vendorId,
-        mappedCount:
-          mappings.length,
-        mappings,
-      };
-    },
-  );
-}
+                serviceablePincode: {
+                  select: {
+                    id: true,
+                    pincode: true,
+                    district: true,
+                    state: true,
+                  },
+                },
+              },
+            });
+
+        return {
+          vendorId,
+
+          mappedCount:
+            mappings.length,
+
+          mappings,
+        };
+      },
+    );
+  }
 }

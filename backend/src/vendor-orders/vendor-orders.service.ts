@@ -19,6 +19,44 @@ type DateFilter =
   | "LAST_7_DAYS"
   | "LAST_30_DAYS";
 
+type StatusGroup =
+  | "ALL"
+  | "PENDING"
+  | "IN_PROCESS"
+  | "COMPLETED"
+  | "CANCELLED";
+
+type QuestionnaireSelection = {
+  itemId: number;
+  optionId: number | null;
+  optionIds: number[];
+  childOptionIds: number[];
+};
+
+const STATUS_GROUPS: Record<
+  Exclude<StatusGroup, "ALL">,
+  SellOrderStatus[]
+> = {
+  PENDING: [
+    SellOrderStatus.PICKUP_REQUESTED,
+    SellOrderStatus.PICKUP_CONFIRMED,
+  ],
+
+  IN_PROCESS: [
+    SellOrderStatus.PICKUP_STARTED,
+    SellOrderStatus.INSPECTION_COMPLETED,
+    SellOrderStatus.PAYMENT_COMPLETED,
+  ],
+
+  COMPLETED: [
+    SellOrderStatus.COMPLETED,
+  ],
+
+  CANCELLED: [
+    SellOrderStatus.CANCELLED,
+  ],
+};
+
 @Injectable()
 export class VendorOrdersService {
   constructor(
@@ -75,6 +113,34 @@ export class VendorOrdersService {
     return raw as SellOrderStatus;
   }
 
+  private parseStatusGroup(
+    value: unknown,
+  ): StatusGroup {
+    const raw = String(value ?? "ALL")
+      .trim()
+      .toUpperCase();
+
+    const allowed: StatusGroup[] = [
+      "ALL",
+      "PENDING",
+      "IN_PROCESS",
+      "COMPLETED",
+      "CANCELLED",
+    ];
+
+    if (
+      !allowed.includes(
+        raw as StatusGroup,
+      )
+    ) {
+      throw new BadRequestException(
+        "Invalid order status group.",
+      );
+    }
+
+    return raw as StatusGroup;
+  }
+
   private parseDateFilter(
     value: unknown,
   ): DateFilter {
@@ -104,14 +170,10 @@ export class VendorOrdersService {
   }
 
   /*
-   * Vendor operational date filter.
+   * All operational date filters are based on
+   * the active vendor assignment timestamp.
    *
-   * Filter is based on the CURRENT active
-   * vendor assignment assignedAt timestamp,
-   * not customer order creation time.
-   *
-   * India timezone boundaries are converted
-   * to UTC because DB timestamps are UTC.
+   * Business timezone: Asia/Kolkata.
    */
   private getAssignmentDateRange(
     filter: DateFilter,
@@ -122,7 +184,7 @@ export class VendorOrdersService {
 
     const now = new Date();
 
-    const indiaParts =
+    const parts =
       new Intl.DateTimeFormat(
         "en-CA",
         {
@@ -134,43 +196,49 @@ export class VendorOrdersService {
       ).formatToParts(now);
 
     const year = Number(
-      indiaParts.find(
+      parts.find(
         (part) => part.type === "year",
       )?.value,
     );
 
     const month = Number(
-      indiaParts.find(
+      parts.find(
         (part) => part.type === "month",
       )?.value,
     );
 
     const day = Number(
-      indiaParts.find(
+      parts.find(
         (part) => part.type === "day",
       )?.value,
     );
 
     /*
-     * IST = UTC +05:30.
-     * Therefore IST midnight in UTC is
-     * previous date 18:30 UTC.
+     * Construct local calendar midnight as UTC,
+     * then subtract IST offset.
+     *
+     * Avoids relying on server timezone.
      */
+    const istOffsetMs =
+      330 * 60 * 1000;
+
     const todayStart = new Date(
       Date.UTC(
         year,
         month - 1,
         day,
-        -5,
-        -30,
         0,
         0,
-      ),
+        0,
+        0,
+      ) - istOffsetMs,
     );
 
+    const dayMs =
+      24 * 60 * 60 * 1000;
+
     const tomorrowStart = new Date(
-      todayStart.getTime() +
-        24 * 60 * 60 * 1000,
+      todayStart.getTime() + dayMs,
     );
 
     if (filter === "TODAY") {
@@ -183,8 +251,7 @@ export class VendorOrdersService {
     if (filter === "YESTERDAY") {
       return {
         gte: new Date(
-          todayStart.getTime() -
-            24 * 60 * 60 * 1000,
+          todayStart.getTime() - dayMs,
         ),
         lt: todayStart,
       };
@@ -194,7 +261,7 @@ export class VendorOrdersService {
       return {
         gte: new Date(
           todayStart.getTime() -
-            6 * 24 * 60 * 60 * 1000,
+            6 * dayMs,
         ),
         lt: tomorrowStart,
       };
@@ -203,7 +270,7 @@ export class VendorOrdersService {
     return {
       gte: new Date(
         todayStart.getTime() -
-          29 * 24 * 60 * 60 * 1000,
+          29 * dayMs,
       ),
       lt: tomorrowStart,
     };
@@ -231,11 +298,471 @@ export class VendorOrdersService {
     };
   }
 
+  private getStatusWhere(
+    status: SellOrderStatus | undefined,
+    statusGroup: StatusGroup,
+  ) {
+    /*
+     * Exact status takes precedence.
+     * Useful for future deep filters.
+     */
+    if (status) {
+      return {
+        status,
+      };
+    }
+
+    if (statusGroup === "ALL") {
+      return {};
+    }
+
+    return {
+      status: {
+        in: STATUS_GROUPS[statusGroup],
+      },
+    };
+  }
+
+  private normalizeQuestionnaireSnapshot(
+    value: unknown,
+  ): QuestionnaireSelection[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.flatMap((entry) => {
+      if (
+        !entry ||
+        typeof entry !== "object"
+      ) {
+        return [];
+      }
+
+      const raw =
+        entry as Record<
+          string,
+          unknown
+        >;
+
+      const itemId =
+        Number(raw.itemId);
+
+      if (!Number.isInteger(itemId)) {
+        return [];
+      }
+
+      const optionIdRaw =
+        raw.optionId;
+
+      const optionId =
+        optionIdRaw === null ||
+        optionIdRaw === undefined
+          ? null
+          : Number(optionIdRaw);
+
+      const optionIds =
+        this.toIntegerArray(
+          raw.optionIds,
+        );
+
+      const childOptionIds =
+        this.toIntegerArray(
+          raw.childOptionIds,
+        );
+
+      return [
+        {
+          itemId,
+
+          optionId:
+            optionId !== null &&
+            Number.isInteger(optionId)
+              ? optionId
+              : null,
+
+          optionIds,
+          childOptionIds,
+        },
+      ];
+    });
+  }
+
+  private toIntegerArray(
+    value: unknown,
+  ): number[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        value
+          .map(Number)
+          .filter(Number.isInteger),
+      ),
+    );
+  }
+
+  /*
+   * Historical orders currently store IDs only.
+   *
+   * We resolve CURRENT labels for readability,
+   * but we NEVER recalculate historical pricing.
+   *
+   * This method performs one batched query for
+   * all questionnaire items in the order.
+   */
+  private async buildDeviceReport(
+    questionnaireSnapshot: unknown,
+  ) {
+    const selections =
+      this.normalizeQuestionnaireSnapshot(
+        questionnaireSnapshot,
+      );
+
+    if (selections.length === 0) {
+      return {
+        available: false,
+        historicalLabelsResolved:
+          false,
+        perAnswerDeductionAvailable:
+          false,
+        sections: [],
+      };
+    }
+
+    const itemIds =
+      Array.from(
+        new Set(
+          selections.map(
+            (selection) =>
+              selection.itemId,
+          ),
+        ),
+      );
+
+    const items =
+      await this.prisma.questionnaireItem.findMany({
+        where: {
+          id: {
+            in: itemIds,
+          },
+        },
+
+        select: {
+          id: true,
+          name: true,
+          questionText: true,
+          answerType: true,
+          displayOrder: true,
+
+          section: {
+            select: {
+              id: true,
+              name: true,
+              displayOrder: true,
+            },
+          },
+
+          options: {
+            select: {
+              id: true,
+              label: true,
+              value: true,
+              issueCode: true,
+              severity: true,
+              parentOptionId: true,
+              displayOrder: true,
+
+              issueGroup: {
+                select: {
+                  id: true,
+                  name: true,
+                  displayOrder: true,
+                },
+              },
+            },
+
+            orderBy: [
+              {
+                displayOrder: "asc",
+              },
+              {
+                id: "asc",
+              },
+            ],
+          },
+        },
+      });
+
+    const itemMap =
+      new Map(
+        items.map((item) => [
+          item.id,
+          item,
+        ]),
+      );
+
+    const sectionMap =
+      new Map<
+        number,
+        {
+          id: number;
+          name: string;
+          displayOrder: number;
+          checks: Array<{
+            itemId: number;
+            name: string;
+            question: string;
+            answerType: string;
+            selectedAnswers: Array<{
+              id: number;
+              label: string;
+              value: string;
+              issueCode: string | null;
+              severity: string;
+              parentOptionId:
+                | number
+                | null;
+              issueGroup: {
+                id: number;
+                name: string;
+              } | null;
+              selectionType:
+                | "PRIMARY"
+                | "OPTION"
+                | "CHILD";
+            }>;
+          }>;
+        }
+      >();
+
+    for (
+      const selection of selections
+    ) {
+      const item =
+        itemMap.get(
+          selection.itemId,
+        );
+
+      if (!item) {
+        continue;
+      }
+
+      const selectedIds =
+        new Map<
+          number,
+          | "PRIMARY"
+          | "OPTION"
+          | "CHILD"
+        >();
+
+      if (
+        selection.optionId !== null
+      ) {
+        selectedIds.set(
+          selection.optionId,
+          "PRIMARY",
+        );
+      }
+
+      for (
+        const id of
+        selection.optionIds
+      ) {
+        if (!selectedIds.has(id)) {
+          selectedIds.set(
+            id,
+            "OPTION",
+          );
+        }
+      }
+
+      for (
+        const id of
+        selection.childOptionIds
+      ) {
+        selectedIds.set(
+          id,
+          "CHILD",
+        );
+      }
+
+      const optionMap =
+        new Map(
+          item.options.map(
+            (option) => [
+              option.id,
+              option,
+            ],
+          ),
+        );
+
+      const selectedAnswers =
+        Array.from(
+          selectedIds.entries(),
+        )
+          .map(
+            ([
+              optionId,
+              selectionType,
+            ]) => {
+              const option =
+                optionMap.get(
+                  optionId,
+                );
+
+              if (!option) {
+                return null;
+              }
+
+              return {
+                id: option.id,
+                label:
+                  option.label,
+                value:
+                  option.value,
+                issueCode:
+                  option.issueCode,
+                severity:
+                  String(
+                    option.severity,
+                  ),
+                parentOptionId:
+                  option.parentOptionId,
+
+                issueGroup:
+                  option.issueGroup
+                    ? {
+                        id:
+                          option
+                            .issueGroup
+                            .id,
+                        name:
+                          option
+                            .issueGroup
+                            .name,
+                      }
+                    : null,
+
+                selectionType,
+              };
+            },
+          )
+          .filter(
+            (
+              answer,
+            ): answer is NonNullable<
+              typeof answer
+            > => Boolean(answer),
+          );
+
+      let section =
+        sectionMap.get(
+          item.section.id,
+        );
+
+      if (!section) {
+        section = {
+          id:
+            item.section.id,
+          name:
+            item.section.name,
+          displayOrder:
+            item.section
+              .displayOrder,
+          checks: [],
+        };
+
+        sectionMap.set(
+          item.section.id,
+          section,
+        );
+      }
+
+      section.checks.push({
+        itemId: item.id,
+        name: item.name,
+        question:
+          item.questionText,
+        answerType:
+          String(
+            item.answerType,
+          ),
+        selectedAnswers,
+      });
+    }
+
+    const sections =
+      Array.from(
+        sectionMap.values(),
+      )
+        .sort(
+          (a, b) =>
+            a.displayOrder -
+            b.displayOrder,
+        )
+        .map((section) => ({
+          id: section.id,
+          name: section.name,
+
+          checks:
+            section.checks.sort(
+              (a, b) => {
+                const itemA =
+                  itemMap.get(
+                    a.itemId,
+                  );
+
+                const itemB =
+                  itemMap.get(
+                    b.itemId,
+                  );
+
+                return (
+                  Number(
+                    itemA?.displayOrder ??
+                      0,
+                  ) -
+                  Number(
+                    itemB?.displayOrder ??
+                      0,
+                  )
+                );
+              },
+            ),
+        }));
+
+    return {
+      available:
+        sections.length > 0,
+
+      /*
+       * Important:
+       * labels come from current questionnaire
+       * master data because historical orders
+       * did not freeze labels.
+       */
+      historicalLabelsResolved:
+        true,
+
+      /*
+       * Never pretend current deduction rules
+       * were the rules used historically.
+       */
+      perAnswerDeductionAvailable:
+        false,
+
+      sections,
+    };
+  }
+
   async listOrders(
     vendorId: number,
     query: {
       search?: unknown;
       status?: unknown;
+      statusGroup?: unknown;
       dateFilter?: unknown;
       page?: unknown;
       limit?: unknown;
@@ -268,6 +795,11 @@ export class VendorOrdersService {
         query.status,
       );
 
+    const statusGroup =
+      this.parseStatusGroup(
+        query.statusGroup,
+      );
+
     const dateFilter =
       this.parseDateFilter(
         query.dateFilter,
@@ -279,12 +811,16 @@ export class VendorOrdersService {
         dateFilter,
       );
 
+    const statusWhere =
+      this.getStatusWhere(
+        status,
+        statusGroup,
+      );
+
     const where = {
       currentVendorId: vendorId,
 
-      ...(status
-        ? { status }
-        : {}),
+      ...statusWhere,
 
       ...(assignmentFilter
         ? {
@@ -298,59 +834,72 @@ export class VendorOrdersService {
             OR: [
               {
                 orderNumber: {
-                  contains: search,
+                  contains:
+                    search,
                   mode:
                     "insensitive" as const,
                 },
               },
+
               {
                 productName: {
-                  contains: search,
+                  contains:
+                    search,
                   mode:
                     "insensitive" as const,
                 },
               },
+
               {
                 variantLabel: {
-                  contains: search,
+                  contains:
+                    search,
                   mode:
                     "insensitive" as const,
                 },
               },
+
               {
                 addressSnapshot: {
                   is: {
                     fullName: {
-                      contains: search,
+                      contains:
+                        search,
                       mode:
                         "insensitive" as const,
                     },
                   },
                 },
               },
+
               {
                 addressSnapshot: {
                   is: {
                     phone: {
-                      contains: search,
+                      contains:
+                        search,
                     },
                   },
                 },
               },
+
               {
                 addressSnapshot: {
                   is: {
                     pincode: {
-                      contains: search,
+                      contains:
+                        search,
                     },
                   },
                 },
               },
+
               {
                 addressSnapshot: {
                   is: {
                     city: {
-                      contains: search,
+                      contains:
+                        search,
                       mode:
                         "insensitive" as const,
                     },
@@ -370,13 +919,6 @@ export class VendorOrdersService {
           skip,
           take: limit,
 
-          /*
-           * Operational vendor view:
-           * latest assignment first.
-           *
-           * createdAt remains available
-           * as order creation history.
-           */
           orderBy: [
             {
               updatedAt: "desc",
@@ -391,7 +933,6 @@ export class VendorOrdersService {
             orderNumber: true,
 
             productName: true,
-            productImage: true,
             variantLabel: true,
 
             finalPrice: true,
@@ -416,7 +957,12 @@ export class VendorOrdersService {
               select: {
                 fullName: true,
                 phone: true,
+
+                house: true,
+                street: true,
                 locality: true,
+                landmark: true,
+
                 pincode: true,
                 city: true,
                 state: true,
@@ -426,11 +972,13 @@ export class VendorOrdersService {
             vendorAssignments: {
               where: {
                 vendorId,
-                unassignedAt: null,
+                unassignedAt:
+                  null,
               },
 
               orderBy: {
-                assignedAt: "desc",
+                assignedAt:
+                  "desc",
               },
 
               take: 1,
@@ -460,9 +1008,6 @@ export class VendorOrdersService {
         productName:
           row.productName,
 
-        productImage:
-          row.productImage,
-
         variantLabel:
           row.variantLabel,
 
@@ -482,32 +1027,53 @@ export class VendorOrdersService {
           row.addressSnapshot
             ? {
                 name:
-                  row.addressSnapshot
+                  row
+                    .addressSnapshot
                     .fullName,
 
                 phone:
-                  row.addressSnapshot
+                  row
+                    .addressSnapshot
                     .phone,
               }
             : null,
 
-        location:
+        address:
           row.addressSnapshot
             ? {
+                house:
+                  row
+                    .addressSnapshot
+                    .house,
+
+                street:
+                  row
+                    .addressSnapshot
+                    .street,
+
                 locality:
-                  row.addressSnapshot
+                  row
+                    .addressSnapshot
                     .locality,
 
+                landmark:
+                  row
+                    .addressSnapshot
+                    .landmark,
+
                 city:
-                  row.addressSnapshot
+                  row
+                    .addressSnapshot
                     .city,
 
                 state:
-                  row.addressSnapshot
+                  row
+                    .addressSnapshot
                     .state,
 
                 pincode:
-                  row.addressSnapshot
+                  row
+                    .addressSnapshot
                     .pincode,
               }
             : null,
@@ -515,6 +1081,12 @@ export class VendorOrdersService {
         assignment:
           row.vendorAssignments[0] ??
           null,
+
+        /*
+         * Agent DB module is not implemented
+         * yet. Do not fabricate an agent.
+         */
+        agent: null,
 
         createdAt:
           row.createdAt,
@@ -529,12 +1101,16 @@ export class VendorOrdersService {
         total,
 
         totalPages:
-          Math.ceil(total / limit),
+          Math.ceil(
+            total / limit,
+          ),
       },
 
       filters: {
         dateFilter,
-        status: status ?? "ALL",
+        status:
+          status ?? "ALL",
+        statusGroup,
         search,
       },
     };
@@ -544,11 +1120,12 @@ export class VendorOrdersService {
     vendorId: number,
     orderNumberInput: unknown,
   ) {
-    const orderNumber = String(
-      orderNumberInput ?? "",
-    )
-      .trim()
-      .slice(0, 100);
+    const orderNumber =
+      String(
+        orderNumberInput ?? "",
+      )
+        .trim()
+        .slice(0, 100);
 
     if (!orderNumber) {
       throw new BadRequestException(
@@ -558,14 +1135,16 @@ export class VendorOrdersService {
 
     /*
      * SECURITY:
-     * Vendor can only open an order which
-     * is CURRENTLY assigned to that vendor.
+     * Never trust vendorId from frontend.
+     * Caller supplies authenticated session
+     * vendorId.
      */
     const order =
       await this.prisma.sellOrder.findFirst({
         where: {
           orderNumber,
-          currentVendorId: vendorId,
+          currentVendorId:
+            vendorId,
         },
 
         select: {
@@ -576,7 +1155,6 @@ export class VendorOrdersService {
           variantId: true,
 
           productName: true,
-          productImage: true,
           variantLabel: true,
 
           basePrice: true,
@@ -637,17 +1215,24 @@ export class VendorOrdersService {
 
           reschedules: {
             orderBy: {
-              createdAt: "desc",
+              createdAt:
+                "desc",
             },
 
             select: {
               id: true,
 
-              oldPickupDate: true,
-              newPickupDate: true,
+              oldPickupDate:
+                true,
 
-              oldSlotLabel: true,
-              newSlotLabel: true,
+              newPickupDate:
+                true,
+
+              oldSlotLabel:
+                true,
+
+              newSlotLabel:
+                true,
 
               createdAt: true,
             },
@@ -659,7 +1244,8 @@ export class VendorOrdersService {
             },
 
             orderBy: {
-              assignedAt: "desc",
+              assignedAt:
+                "desc",
             },
 
             select: {
@@ -670,7 +1256,8 @@ export class VendorOrdersService {
 
               assignedAt: true,
 
-              unassignedAt: true,
+              unassignedAt:
+                true,
 
               unassignmentReason:
                 true,
@@ -685,6 +1272,17 @@ export class VendorOrdersService {
       );
     }
 
+    /*
+     * One additional query only when View
+     * Details is opened.
+     *
+     * List/dashboard never pay this cost.
+     */
+    const deviceReport =
+      await this.buildDeviceReport(
+        order.questionnaireSnapshot,
+      );
+
     return {
       id: order.id,
 
@@ -693,18 +1291,19 @@ export class VendorOrdersService {
 
       product: {
         id: order.productId,
-        variantId: order.variantId,
+        variantId:
+          order.variantId,
 
-        name: order.productName,
-        image: order.productImage,
-        variant: order.variantLabel,
+        name:
+          order.productName,
+
+        variant:
+          order.variantLabel,
       },
 
       /*
-       * Customer-side quote snapshot.
-       *
-       * Never recalculate these values in
-       * vendor frontend.
+       * Frozen authoritative customer quote.
+       * Frontend must never recalculate this.
        */
       pricing: {
         basePrice:
@@ -718,11 +1317,13 @@ export class VendorOrdersService {
       },
 
       /*
-       * Frozen customer questionnaire
-       * from order creation.
+       * Raw historical IDs retained for
+       * backward compatibility.
        */
       questionnaire:
         order.questionnaireSnapshot,
+
+      deviceReport,
 
       status:
         order.status,
@@ -747,11 +1348,13 @@ export class VendorOrdersService {
         order.addressSnapshot
           ? {
               name:
-                order.addressSnapshot
+                order
+                  .addressSnapshot
                   .fullName,
 
               phone:
-                order.addressSnapshot
+                order
+                  .addressSnapshot
                   .phone,
             }
           : null,
@@ -768,14 +1371,6 @@ export class VendorOrdersService {
       assignmentHistory:
         order.vendorAssignments,
 
-      /*
-       * Agent module is intentionally
-       * not fabricated here.
-       *
-       * Later this response will contain
-       * agentAssignment + inspections +
-       * requotes from real DB records.
-       */
       agent: null,
 
       createdAt:
@@ -804,7 +1399,8 @@ export class VendorOrdersService {
       );
 
     const where = {
-      currentVendorId: vendorId,
+      currentVendorId:
+        vendorId,
 
       ...(assignmentFilter
         ? {
@@ -853,7 +1449,6 @@ export class VendorOrdersService {
             orderNumber: true,
 
             productName: true,
-            productImage: true,
             variantLabel: true,
 
             finalPrice: true,
@@ -862,6 +1457,12 @@ export class VendorOrdersService {
             pickupDate: true,
 
             createdAt: true,
+
+            pickupSlot: {
+              select: {
+                label: true,
+              },
+            },
 
             addressSnapshot: {
               select: {
@@ -874,17 +1475,20 @@ export class VendorOrdersService {
             vendorAssignments: {
               where: {
                 vendorId,
-                unassignedAt: null,
+                unassignedAt:
+                  null,
               },
 
               orderBy: {
-                assignedAt: "desc",
+                assignedAt:
+                  "desc",
               },
 
               take: 1,
 
               select: {
-                assignedAt: true,
+                assignedAt:
+                  true,
               },
             },
           },
@@ -901,6 +1505,20 @@ export class VendorOrdersService {
         ),
       );
 
+    const getCount = (
+      statuses: SellOrderStatus[],
+    ) =>
+      statuses.reduce(
+        (total, status) =>
+          total +
+          Number(
+            statusCounts[
+              status
+            ] ?? 0,
+          ),
+        0,
+      );
+
     return {
       dateFilter,
 
@@ -908,19 +1526,39 @@ export class VendorOrdersService {
 
       statusCounts,
 
+      statusGroups: {
+        pending:
+          getCount(
+            STATUS_GROUPS.PENDING,
+          ),
+
+        inProcess:
+          getCount(
+            STATUS_GROUPS.IN_PROCESS,
+          ),
+
+        completed:
+          getCount(
+            STATUS_GROUPS.COMPLETED,
+          ),
+
+        cancelled:
+          getCount(
+            STATUS_GROUPS.CANCELLED,
+          ),
+      },
+
       recentOrders:
         recentOrders.map(
           (order) => ({
-            id: order.id,
+            id:
+              order.id,
 
             orderNumber:
               order.orderNumber,
 
             productName:
               order.productName,
-
-            productImage:
-              order.productImage,
 
             variantLabel:
               order.variantLabel,
@@ -934,8 +1572,14 @@ export class VendorOrdersService {
             pickupDate:
               order.pickupDate,
 
+            pickupSlotLabel:
+              order.pickupSlot
+                ?.label ??
+              null,
+
             customerName:
-              order.addressSnapshot
+              order
+                .addressSnapshot
                 ?.fullName ??
               null,
 
@@ -943,17 +1587,20 @@ export class VendorOrdersService {
               order.addressSnapshot
                 ? {
                     city:
-                      order.addressSnapshot
+                      order
+                        .addressSnapshot
                         .city,
 
                     pincode:
-                      order.addressSnapshot
+                      order
+                        .addressSnapshot
                         .pincode,
                   }
                 : null,
 
             assignedAt:
-              order.vendorAssignments[0]
+              order
+                .vendorAssignments[0]
                 ?.assignedAt ??
               null,
 
