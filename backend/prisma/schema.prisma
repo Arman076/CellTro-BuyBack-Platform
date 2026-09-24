@@ -1,4 +1,4 @@
-﻿generator client {
+generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
 }
@@ -747,9 +747,15 @@ model SellOrder {
   pickupSlot            PickupSlotTemplate       @relation(fields: [pickupSlotId], references: [id], onDelete: Restrict)
   payoutMethod          PayoutMethod
   payoutUpiMobile       String?
-  addressSnapshot       OrderAddressSnapshot?
-  statusHistory         OrderStatusHistory[]
-  reschedules           OrderRescheduleHistory[]
+
+  currentVendorId Int?
+  currentVendor   Vendor? @relation(fields: [currentVendorId], references: [id], onDelete: Restrict)
+
+  vendorAssignments OrderVendorAssignment[]
+
+  addressSnapshot OrderAddressSnapshot?
+  statusHistory   OrderStatusHistory[]
+  reschedules     OrderRescheduleHistory[]
 
   enquiry      EnquirySession?
   cancellation OrderCancellation?
@@ -764,6 +770,54 @@ model SellOrder {
   @@index([pickupDate])
   @@index([pickupSlotId])
   @@index([createdAt])
+
+  @@index([currentVendorId, status, createdAt])
+}
+
+
+enum OrderVendorAssignmentSource {
+  AUTO
+  MANUAL
+  REROUTE
+}
+
+enum OrderVendorAssignmentReason {
+  PINCODE_PRIORITY
+  MANUAL_ADMIN
+  REROUTE
+}
+
+enum OrderVendorUnassignmentReason {
+  MANUAL
+  VENDOR_INACTIVE
+  VENDOR_SUSPENDED
+  SERVICE_AREA_REMOVED
+  REROUTED
+}
+
+model OrderVendorAssignment {
+  id Int @id @default(autoincrement())
+
+  orderId String
+  order   SellOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  vendorId Int
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+
+  source OrderVendorAssignmentSource
+  reason OrderVendorAssignmentReason
+
+  prioritySnapshot Int?
+
+  assignedAt DateTime @default(now())
+
+  unassignedAt       DateTime?
+  unassignmentReason OrderVendorUnassignmentReason?
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId, assignedAt])
+  @@index([vendorId, unassignedAt, assignedAt])
 }
 
 model OrderAddressSnapshot {

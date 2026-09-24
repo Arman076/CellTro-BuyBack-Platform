@@ -49,6 +49,10 @@ import {
 import {
   VendorEmailService,
 } from "../vendor-security/vendor-email.service.js";
+
+import { SuperAdminRoutingController } from "./routing/super-admin-routing.controller.js";
+import { SuperAdminRoutingService } from "./routing/super-admin-routing.service.js";
+
 @Module({
   controllers: [
     SuperAdminDashboardController,
@@ -57,6 +61,7 @@ import {
     SuperAdminCustomersController,
     SuperAdminVendorsController,
     SuperAdminVendorApplicationsController,
+    SuperAdminRoutingController,
   ],
 
   providers: [
@@ -66,6 +71,7 @@ import {
     SuperAdminCustomersService,
     SuperAdminVendorsService,
     SuperAdminVendorApplicationsService,
+    SuperAdminRoutingService,
     VendorEmailService,
   ],
 })

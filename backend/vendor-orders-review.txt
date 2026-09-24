@@ -1,0 +1,7325 @@
+
+===== FILE: .\src\orders\orders.controller.ts =====
+
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Req,
+  Res,
+} from "@nestjs/common";
+
+import type {
+  Request,
+  Response,
+} from "express";
+
+import {
+  OrdersService,
+} from "./orders.service.js";
+
+const CUSTOMER_SESSION_COOKIE =
+  "celltro_customer_session";
+
+@Controller("orders")
+export class OrdersController {
+  constructor(
+    private readonly ordersService:
+      OrdersService,
+  ) {}
+
+  private readCustomerSessionCookie(
+    request: Request,
+  ) {
+    const cookieHeader =
+      String(
+        request.headers.cookie ??
+          "",
+      );
+
+    for (
+      const part of cookieHeader.split(
+        ";",
+      )
+    ) {
+      const [
+        rawName,
+        ...rawValueParts
+      ] =
+        part
+          .trim()
+          .split("=");
+
+      if (
+        rawName ===
+        CUSTOMER_SESSION_COOKIE
+      ) {
+        return decodeURIComponent(
+          rawValueParts.join("="),
+        ).trim();
+      }
+    }
+
+    return "";
+  }
+
+  @Get("pickup-slots")
+  getPickupSlots() {
+    return this.ordersService.getPickupSlots();
+  }
+
+  @Get("cancellation-reasons")
+  getCancellationReasons() {
+    return this.ordersService.getCustomerCancellationReasons();
+  }
+
+  @Get("customer-addresses")
+  getCustomerAddresses(
+    @Req()
+    request: Request,
+  ) {
+    return this.ordersService.getCustomerAddresses(
+      this.readCustomerSessionCookie(
+        request,
+      ),
+    );
+  }
+
+  @Post("customer-addresses")
+  createCustomerAddress(
+    @Req()
+    request: Request,
+
+    @Body()
+    body: any,
+  ) {
+    return this.ordersService.createCustomerAddress(
+      this.readCustomerSessionCookie(
+        request,
+      ),
+      body,
+    );
+  }
+
+  @Patch("customer-addresses/:id")
+  updateCustomerAddress(
+    @Req()
+    request: Request,
+
+    @Param("id")
+    id: string,
+
+    @Body()
+    body: any,
+  ) {
+    return this.ordersService.updateCustomerAddress(
+      this.readCustomerSessionCookie(
+        request,
+      ),
+      Number(id),
+      body,
+    );
+  }
+
+  @Delete("customer-addresses/:id")
+  deleteCustomerAddress(
+    @Req()
+    request: Request,
+
+    @Param("id")
+    id: string,
+  ) {
+    return this.ordersService.deleteCustomerAddress(
+      this.readCustomerSessionCookie(
+        request,
+      ),
+      Number(id),
+    );
+  }
+
+  @Post()
+  createOrder(
+    @Req()
+    request: Request,
+
+    @Body()
+    body: any,
+  ) {
+    return this.ordersService.createOrder(
+      this.readCustomerSessionCookie(
+        request,
+      ),
+      body,
+    );
+  }
+
+  @Get("feedback-options")
+  getFeedbackOptions() {
+    return this.ordersService.getCustomerFeedbackOptions();
+  }
+
+  @Post(":orderNumber/feedback")
+  submitFeedback(
+    @Req()
+    request: Request,
+
+    @Param("orderNumber")
+    orderNumber: string,
+
+    @Body()
+    body: {
+      rating?: number;
+      optionCode?: string;
+      feedbackText?: string;
+    },
+  ) {
+    return this.ordersService.submitCustomerFeedback(
+      this.readCustomerSessionCookie(
+        request,
+      ),
+      orderNumber,
+      body,
+    );
+  }
+
+  @Get("my-orders")
+  getMyOrders(
+    @Req()
+    request: Request,
+  ) {
+    return this.ordersService.getCustomerOrderHistory(
+      this.readCustomerSessionCookie(
+        request,
+      ),
+    );
+  }
+
+  @Get(":orderNumber/pdf")
+  async downloadOrderPdf(
+    @Req()
+    request: Request,
+
+    @Param("orderNumber")
+    orderNumber: string,
+
+    @Res()
+    response: Response,
+  ) {
+    const bytes =
+      await this.ordersService.generateCustomerOrderPdf(
+        this.readCustomerSessionCookie(
+          request,
+        ),
+        orderNumber,
+      );
+
+    const safeOrderNumber =
+      String(
+        orderNumber,
+      ).replace(
+        /[^A-Za-z0-9_-]/g,
+        "_",
+      );
+
+    response.setHeader(
+      "Content-Type",
+      "application/pdf",
+    );
+
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="celltro-order-${safeOrderNumber}.pdf"`,
+    );
+
+    response.setHeader(
+      "Cache-Control",
+      "private, no-store",
+    );
+
+    response.end(
+      Buffer.from(
+        bytes,
+      ),
+    );
+  }
+
+  @Get(":orderNumber")
+  getOrder(
+    @Req()
+    request: Request,
+
+    @Param("orderNumber")
+    orderNumber: string,
+  ) {
+    return this.ordersService.getOrder(
+      this.readCustomerSessionCookie(
+        request,
+      ),
+      orderNumber,
+    );
+  }
+
+  @Patch(":orderNumber/reschedule")
+  reschedule(
+    @Req()
+    request: Request,
+
+    @Param("orderNumber")
+    orderNumber: string,
+
+    @Body()
+    body: any,
+  ) {
+    return this.ordersService.rescheduleOrder(
+      this.readCustomerSessionCookie(
+        request,
+      ),
+      orderNumber,
+      body,
+    );
+  }
+
+  @Patch(":orderNumber/cancel")
+  cancel(
+    @Req()
+    request: Request,
+
+    @Param("orderNumber")
+    orderNumber: string,
+
+    @Body()
+    body: {
+      reasonCode?: string;
+      reasonText?: string;
+    },
+  ) {
+    return this.ordersService.cancelOrder(
+      this.readCustomerSessionCookie(
+        request,
+      ),
+      orderNumber,
+      body,
+    );
+  }
+}
+
+===== FILE: .\src\orders\orders.service.ts =====
+
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from "@nestjs/common";
+
+import {
+  createHash,
+} from "crypto";
+
+import {
+  PDFDocument,
+  StandardFonts,
+  rgb,
+} from "pdf-lib";
+
+import {
+  PrismaService,
+} from "../prisma/prisma/prisma.service.js";
+
+import {
+  RoutingService,
+} from "../routing/routing.service.js";
+
+@Injectable()
+export class OrdersService {
+  constructor(
+    private readonly prisma:
+      PrismaService,
+
+    private readonly routingService:
+      RoutingService,
+  ) {}
+
+  private hashToken(
+    value: string,
+  ) {
+    return createHash("sha256")
+      .update(value)
+      .digest("hex");
+  }
+
+  private normalizePhone(
+    phone: unknown,
+  ) {
+    return String(phone ?? "")
+      .replace(/\D/g, "");
+  }
+
+  private validateIndianPhone(
+    phone: string,
+  ) {
+    return /^[6-9]\d{9}$/.test(
+      phone,
+    );
+  }
+
+  private async requireVerifiedCustomer(
+    rawToken: string,
+  ) {
+    const token =
+      String(rawToken || "")
+        .trim();
+
+    if (!token) {
+      throw new UnauthorizedException(
+        "Customer verification session is required.",
+      );
+    }
+
+    const session =
+      await this.prisma.customerVerifiedSession.findFirst({
+        where: {
+          tokenHash:
+            this.hashToken(
+              token,
+            ),
+
+          revokedAt:
+            null,
+
+          expiresAt: {
+            gt: new Date(),
+          },
+        },
+
+        select: {
+          id: true,
+          phone: true,
+          expiresAt: true,
+        },
+      });
+
+    if (
+      !session ||
+      !this.validateIndianPhone(
+        session.phone,
+      )
+    ) {
+      throw new UnauthorizedException(
+        "Customer verification session is invalid or expired.",
+      );
+    }
+
+    return session;
+  }
+
+  private requiredText(
+    value: unknown,
+    fieldName: string,
+    maxLength: number,
+  ) {
+    const text =
+      String(value ?? "")
+        .trim();
+
+    if (
+      !text ||
+      text.length >
+        maxLength
+    ) {
+      throw new BadRequestException(
+        `${fieldName} is invalid.`,
+      );
+    }
+
+    return text;
+  }
+
+  private optionalText(
+    value: unknown,
+    maxLength: number,
+  ) {
+    const text =
+      String(value ?? "")
+        .trim();
+
+    if (!text) {
+      return null;
+    }
+
+    if (
+      text.length >
+      maxLength
+    ) {
+      throw new BadRequestException(
+        "Provided text is too long.",
+      );
+    }
+
+    return text;
+  }
+
+  private addressType(
+    type: unknown,
+  ) {
+    const value =
+      String(type || "")
+        .toUpperCase();
+
+    if (
+      ![
+        "HOME",
+        "OFFICE",
+        "OTHER",
+      ].includes(
+        value,
+      )
+    ) {
+      throw new BadRequestException(
+        "Invalid address type.",
+      );
+    }
+
+    return value as
+      | "HOME"
+      | "OFFICE"
+      | "OTHER";
+  }
+
+  private pincode(
+    value: unknown,
+  ) {
+    const pincode =
+      String(value ?? "")
+        .replace(/\D/g, "");
+
+    if (
+      !/^[1-9]\d{5}$/.test(
+        pincode,
+      )
+    ) {
+      throw new BadRequestException(
+        "Enter a valid 6-digit pincode.",
+      );
+    }
+
+    return pincode;
+  }
+
+  private addressInput(
+    body: any,
+  ) {
+    return {
+      fullName:
+        this.requiredText(
+          body?.fullName,
+          "Full name",
+          100,
+        ),
+
+      house:
+        this.requiredText(
+          body?.house,
+          "House / flat",
+          160,
+        ),
+
+      street:
+        this.requiredText(
+          body?.street,
+          "Street",
+          160,
+        ),
+
+      locality:
+        this.requiredText(
+          body?.locality,
+          "Locality",
+          120,
+        ),
+
+      landmark:
+        this.optionalText(
+          body?.landmark,
+          160,
+        ),
+
+      pincode:
+        this.pincode(
+          body?.pincode,
+        ),
+
+      city:
+        this.requiredText(
+          body?.city,
+          "City",
+          100,
+        ),
+
+      state:
+        this.requiredText(
+          body?.state,
+          "State",
+          100,
+        ),
+
+      type:
+        this.addressType(
+          body?.type,
+        ),
+    };
+  }
+
+  private dateOnly(
+    value: unknown,
+  ) {
+    const raw =
+      String(value || "");
+
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(
+        raw,
+      )
+    ) {
+      throw new BadRequestException(
+        "Invalid pickup date.",
+      );
+    }
+
+    const valueAsDate =
+      new Date(
+        `${raw}T00:00:00.000Z`,
+      );
+
+    if (
+      Number.isNaN(
+        valueAsDate.getTime(),
+      )
+    ) {
+      throw new BadRequestException(
+        "Invalid pickup date.",
+      );
+    }
+
+    return valueAsDate;
+  }
+
+  private orderNumber() {
+    const date =
+      new Date();
+
+    const ymd = [
+      date.getFullYear(),
+
+      String(
+        date.getMonth() +
+          1,
+      ).padStart(
+        2,
+        "0",
+      ),
+
+      String(
+        date.getDate(),
+      ).padStart(
+        2,
+        "0",
+      ),
+    ].join("");
+
+    const tail =
+      `${Date.now().toString(36)}${Math.random()
+        .toString(36)
+        .slice(2, 6)}`
+        .toUpperCase();
+
+    return `CEL-${ymd}-${tail}`;
+  }
+
+  private async ensureDefaultSlots() {
+    const defaults = [
+      {
+        code:
+          "10_14",
+
+        label:
+          "10:00 AM - 02:00 PM",
+
+        startTime:
+          "10:00",
+
+        endTime:
+          "14:00",
+
+        displayOrder:
+          10,
+      },
+
+      {
+        code:
+          "14_18",
+
+        label:
+          "02:00 PM - 06:00 PM",
+
+        startTime:
+          "14:00",
+
+        endTime:
+          "18:00",
+
+        displayOrder:
+          20,
+      },
+
+      {
+        code:
+          "18_22",
+
+        label:
+          "06:00 PM - 10:00 PM",
+
+        startTime:
+          "18:00",
+
+        endTime:
+          "22:00",
+
+        displayOrder:
+          30,
+      },
+    ];
+
+    await Promise.all(
+      defaults.map(
+        (slot) =>
+          this.prisma.pickupSlotTemplate.upsert({
+            where: {
+              code:
+                slot.code,
+            },
+
+            update: {},
+
+            create:
+              slot,
+          }),
+      ),
+    );
+  }
+
+
+  private async ensureDefaultCancellationReasons() {
+    const defaults = [
+      {
+        code: "CHANGED_MIND",
+        label: "Changed my mind",
+        audience: "CUSTOMER" as const,
+        requiresFreeText: false,
+        displayOrder: 10,
+      },
+      {
+        code: "PRICE_LOW",
+        label: "Expected a better price",
+        audience: "CUSTOMER" as const,
+        requiresFreeText: false,
+        displayOrder: 20,
+      },
+      {
+        code: "TIMING_ISSUE",
+        label: "Pickup timing does not work",
+        audience: "CUSTOMER" as const,
+        requiresFreeText: false,
+        displayOrder: 30,
+      },
+      {
+        code: "SOLD_ELSEWHERE",
+        label: "Sold the device elsewhere",
+        audience: "CUSTOMER" as const,
+        requiresFreeText: false,
+        displayOrder: 40,
+      },
+      {
+        code: "WRONG_DEVICE",
+        label: "Selected the wrong device",
+        audience: "CUSTOMER" as const,
+        requiresFreeText: false,
+        displayOrder: 50,
+      },
+      {
+        code: "OTHER",
+        label: "Other",
+        audience: "CUSTOMER" as const,
+        requiresFreeText: true,
+        displayOrder: 90,
+      },
+      {
+        code: "PREFER_NOT_TO_SAY",
+        label: "Prefer not to say",
+        audience: "CUSTOMER" as const,
+        requiresFreeText: false,
+        displayOrder: 100,
+      },
+
+      {
+        code: "CUSTOMER_UNAVAILABLE",
+        label: "Customer unavailable",
+        audience: "AGENT" as const,
+        requiresFreeText: false,
+        displayOrder: 10,
+      },
+      {
+        code: "UNABLE_TO_CONTACT",
+        label: "Unable to contact customer",
+        audience: "AGENT" as const,
+        requiresFreeText: false,
+        displayOrder: 20,
+      },
+      {
+        code: "DEVICE_MISMATCH",
+        label: "Device does not match order",
+        audience: "AGENT" as const,
+        requiresFreeText: false,
+        displayOrder: 30,
+      },
+      {
+        code: "CUSTOMER_REFUSED",
+        label: "Customer refused pickup",
+        audience: "AGENT" as const,
+        requiresFreeText: false,
+        displayOrder: 40,
+      },
+      {
+        code: "DEVICE_UNAVAILABLE",
+        label: "Device not available",
+        audience: "AGENT" as const,
+        requiresFreeText: false,
+        displayOrder: 50,
+      },
+      {
+        code: "ADDRESS_ISSUE",
+        label: "Address / location issue",
+        audience: "AGENT" as const,
+        requiresFreeText: false,
+        displayOrder: 60,
+      },
+      {
+        code: "OTHER",
+        label: "Other",
+        audience: "AGENT" as const,
+        requiresFreeText: true,
+        displayOrder: 90,
+      },
+    ];
+
+    await Promise.all(
+      defaults.map(
+        (item) =>
+          this.prisma.cancellationReasonMaster.upsert({
+            where: {
+              audience_code: {
+                audience:
+                  item.audience,
+                code:
+                  item.code,
+              },
+            },
+
+            update: {},
+
+            create:
+              item,
+          }),
+      ),
+    );
+  }
+
+  async getCustomerCancellationReasons() {
+    await this.ensureDefaultCancellationReasons();
+
+    return this.prisma.cancellationReasonMaster.findMany({
+      where: {
+        audience:
+          "CUSTOMER",
+
+        isActive:
+          true,
+      },
+
+      orderBy: [
+        {
+          displayOrder:
+            "asc",
+        },
+        {
+          id:
+            "asc",
+        },
+      ],
+
+      select: {
+        code: true,
+        label: true,
+        requiresFreeText: true,
+      },
+    });
+  }
+
+  private async getCustomerCancellationReason(
+    reasonCode: string | null,
+  ) {
+    if (!reasonCode) {
+      return null;
+    }
+
+    await this.ensureDefaultCancellationReasons();
+
+    const reason =
+      await this.prisma.cancellationReasonMaster.findUnique({
+        where: {
+          audience_code: {
+            audience:
+              "CUSTOMER",
+
+            code:
+              reasonCode,
+          },
+        },
+      });
+
+    if (
+      !reason ||
+      !reason.isActive
+    ) {
+      throw new BadRequestException(
+        "Invalid cancellation reason.",
+      );
+    }
+
+    return reason;
+  }
+
+  async getPickupSlots() {
+    await this.ensureDefaultSlots();
+
+    return this.prisma.pickupSlotTemplate.findMany({
+      where: {
+        isActive:
+          true,
+      },
+
+      orderBy: [
+        {
+          displayOrder:
+            "asc",
+        },
+
+        {
+          id:
+            "asc",
+        },
+      ],
+
+      select: {
+        id: true,
+        code: true,
+        label: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+  }
+
+  async getCustomerAddresses(
+    rawToken: string,
+  ) {
+    const verified =
+      await this.requireVerifiedCustomer(
+        rawToken,
+      );
+
+    const customer =
+      await this.prisma.customer.findUnique({
+        where: {
+          phone:
+            verified.phone,
+        },
+
+        include: {
+          addresses: {
+            where: {
+              isActive:
+                true,
+            },
+
+            orderBy: {
+              updatedAt:
+                "desc",
+            },
+          },
+        },
+      });
+
+    if (!customer) {
+      return [];
+    }
+
+    const activePincodes =
+      await this.prisma.serviceablePincode.findMany({
+        where: {
+          isActive:
+            true,
+
+          pincode: {
+            in:
+              customer.addresses.map(
+                (address) =>
+                  address.pincode,
+              ),
+          },
+        },
+
+        select: {
+          pincode:
+            true,
+        },
+      });
+
+    const serviceableSet =
+      new Set(
+        activePincodes.map(
+          (item) =>
+            item.pincode,
+        ),
+      );
+
+    return customer.addresses.map(
+      (address) => ({
+        ...address,
+
+        type:
+          address.type ===
+          "HOME"
+            ? "Home"
+            : address.type ===
+                "OFFICE"
+              ? "Office"
+              : "Other",
+
+        serviceable:
+          serviceableSet.has(
+            address.pincode,
+          ),
+      }),
+    );
+  }
+
+  async createCustomerAddress(
+    rawToken: string,
+    body: any,
+  ) {
+    const verified =
+      await this.requireVerifiedCustomer(
+        rawToken,
+      );
+
+    const input =
+      this.addressInput(
+        body,
+      );
+
+    const customer =
+      await this.prisma.customer.upsert({
+        where: {
+          phone:
+            verified.phone,
+        },
+
+        update: {},
+
+        create: {
+          phone:
+            verified.phone,
+        },
+      });
+
+    const address =
+      await this.prisma.customerAddress.create({
+        data: {
+          customerId:
+            customer.id,
+
+          ...input,
+        },
+      });
+
+    const serviceability =
+      await this.prisma.serviceablePincode.findUnique({
+        where: {
+          pincode:
+            address.pincode,
+        },
+
+        select: {
+          isActive:
+            true,
+        },
+      });
+
+    return {
+      ...address,
+
+      type:
+        address.type ===
+        "HOME"
+          ? "Home"
+          : address.type ===
+              "OFFICE"
+            ? "Office"
+            : "Other",
+
+      phone:
+        verified.phone,
+
+      serviceable:
+        serviceability?.isActive ===
+        true,
+    };
+  }
+
+  async updateCustomerAddress(
+    rawToken: string,
+    id: number,
+    body: any,
+  ) {
+    const verified =
+      await this.requireVerifiedCustomer(
+        rawToken,
+      );
+
+    if (
+      !Number.isInteger(id) ||
+      id <= 0
+    ) {
+      throw new BadRequestException(
+        "Invalid address.",
+      );
+    }
+
+    const existing =
+      await this.prisma.customerAddress.findFirst({
+        where: {
+          id,
+
+          customer: {
+            is: {
+              phone:
+                verified.phone,
+            },
+          },
+
+          isActive:
+            true,
+        },
+      });
+
+    if (!existing) {
+      throw new NotFoundException(
+        "Address not found.",
+      );
+    }
+
+    const input =
+      this.addressInput(
+        body,
+      );
+
+    const address =
+      await this.prisma.customerAddress.update({
+        where: {
+          id,
+        },
+
+        data:
+          input,
+      });
+
+    const serviceability =
+      await this.prisma.serviceablePincode.findUnique({
+        where: {
+          pincode:
+            address.pincode,
+        },
+
+        select: {
+          isActive:
+            true,
+        },
+      });
+
+    return {
+      ...address,
+
+      type:
+        address.type ===
+        "HOME"
+          ? "Home"
+          : address.type ===
+              "OFFICE"
+            ? "Office"
+            : "Other",
+
+      phone:
+        verified.phone,
+
+      serviceable:
+        serviceability?.isActive ===
+        true,
+    };
+  }
+
+  async deleteCustomerAddress(
+    rawToken: string,
+    id: number,
+  ) {
+    const verified =
+      await this.requireVerifiedCustomer(
+        rawToken,
+      );
+
+    if (
+      !Number.isInteger(id) ||
+      id <= 0
+    ) {
+      throw new BadRequestException(
+        "Invalid address.",
+      );
+    }
+
+    const existing =
+      await this.prisma.customerAddress.findFirst({
+        where: {
+          id,
+
+          customer: {
+            is: {
+              phone:
+                verified.phone,
+            },
+          },
+
+          isActive:
+            true,
+        },
+
+        select: {
+          id: true,
+        },
+      });
+
+    if (!existing) {
+      throw new NotFoundException(
+        "Address not found.",
+      );
+    }
+
+    await this.prisma.customerAddress.update({
+      where: {
+        id,
+      },
+
+      data: {
+        isActive:
+          false,
+      },
+    });
+
+    return {
+      success:
+        true,
+    };
+  }
+
+  async createOrder(
+    rawToken: string,
+    body: any,
+  ) {
+    const verified =
+      await this.requireVerifiedCustomer(
+        rawToken,
+      );
+
+    const addressId =
+      Number(
+        body?.addressId,
+      );
+
+    if (
+      !Number.isInteger(
+        addressId,
+      ) ||
+      addressId <= 0
+    ) {
+      throw new BadRequestException(
+        "Select a valid address.",
+      );
+    }
+
+    const pickupDate =
+      this.dateOnly(
+        body?.pickupDate,
+      );
+
+    const slotCode =
+      String(
+        body?.pickupSlotCode ||
+          "",
+      ).trim();
+
+    const payoutMethod =
+      String(
+        body?.payoutMethod ||
+          "",
+      )
+        .trim()
+        .toUpperCase();
+
+    if (
+      ![
+        "CASH",
+        "UPI",
+      ].includes(
+        payoutMethod,
+      )
+    ) {
+      throw new BadRequestException(
+        "Select Cash or UPI payout.",
+      );
+    }
+
+    const payoutUpiMobile =
+      payoutMethod ===
+      "UPI"
+        ? this.normalizePhone(
+            body?.payoutUpiMobile,
+          )
+        : null;
+
+    if (
+      payoutMethod ===
+        "UPI" &&
+      !this.validateIndianPhone(
+        payoutUpiMobile ||
+          "",
+      )
+    ) {
+      throw new BadRequestException(
+        "Valid UPI-linked mobile number is required.",
+      );
+    }
+
+    /*
+     * Temporary frontend compatibility:
+     * root enquirySessionId is preferred.
+     * Old nested quote.enquirySessionId is accepted,
+     * but NO price/product data from quote is trusted.
+     */
+    const enquirySessionId =
+      String(
+        body?.enquirySessionId ||
+          body?.quote
+            ?.enquirySessionId ||
+          "",
+      ).trim();
+
+    if (!enquirySessionId) {
+      throw new BadRequestException(
+        "Verified quote session is required.",
+      );
+    }
+
+    const enquiry =
+      await this.prisma.enquirySession.findFirst({
+        where: {
+          sessionId:
+            enquirySessionId,
+
+          phone:
+            verified.phone,
+
+          orderId:
+            null,
+
+          identityVerifiedAt: {
+            not:
+              null,
+          },
+
+          quoteViewedAt: {
+            not:
+              null,
+          },
+
+          quoteAmount: {
+            not:
+              null,
+          },
+        },
+
+        include: {
+          product: {
+            select: {
+              id:
+                true,
+
+              name:
+                true,
+
+              imageUrl:
+                true,
+            },
+          },
+
+          variant: {
+            select: {
+              id:
+                true,
+
+              productId:
+                true,
+
+              basePrice:
+                true,
+
+              values: {
+                include: {
+                  attribute: {
+                    select: {
+                      name:
+                        true,
+
+                      displayOrder:
+                        true,
+                    },
+                  },
+
+                  option: {
+                    select: {
+                      value:
+                        true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+    if (
+      !enquiry ||
+      !enquiry.product ||
+      !enquiry.variant ||
+      enquiry.productId ===
+        null ||
+      enquiry.variantId ===
+        null
+    ) {
+      throw new BadRequestException(
+        "Verified quote session not found. Please get the quote again.",
+      );
+    }
+
+    if (
+      enquiry.variant
+        .productId !==
+      enquiry.productId
+    ) {
+      throw new BadRequestException(
+        "Quote device data is inconsistent.",
+      );
+    }
+
+    /*
+     * Capture the already-validated non-null relations before
+     * entering the transaction callback. TypeScript does not
+     * preserve object-property narrowing across async closures.
+     */
+    const product =
+      enquiry.product;
+
+    const variant =
+      enquiry.variant;
+
+    const productId =
+      enquiry.productId;
+
+    const variantId =
+      enquiry.variantId;
+
+    const basePrice =
+      Number(
+        variant
+          .basePrice,
+      );
+
+    const finalPrice =
+      Number(
+        enquiry.quoteAmount,
+      );
+
+    if (
+      !Number.isFinite(
+        basePrice,
+      ) ||
+      !Number.isFinite(
+        finalPrice,
+      ) ||
+      basePrice < 0 ||
+      finalPrice < 0
+    ) {
+      throw new BadRequestException(
+        "Stored quote is invalid.",
+      );
+    }
+
+    const totalDeduction =
+      Math.max(
+        0,
+        basePrice -
+          finalPrice,
+      );
+
+    const variantLabel =
+      [...variant.values]
+        .sort(
+          (
+            a,
+            b,
+          ) =>
+            a.attribute
+              .displayOrder -
+            b.attribute
+              .displayOrder,
+        )
+        .map(
+          (item) =>
+            item.option.value,
+        )
+        .filter(
+          Boolean,
+        )
+        .join(" / ");
+
+    await this.ensureDefaultSlots();
+
+    const customer =
+      await this.prisma.customer.upsert({
+        where: {
+          phone:
+            verified.phone,
+        },
+
+        update: {},
+
+        create: {
+          phone:
+            verified.phone,
+        },
+      });
+
+    const [
+      address,
+      slot,
+    ] =
+      await Promise.all([
+        this.prisma.customerAddress.findFirst({
+          where: {
+            id:
+              addressId,
+
+            customerId:
+              customer.id,
+
+            isActive:
+              true,
+          },
+        }),
+
+        this.prisma.pickupSlotTemplate.findFirst({
+          where: {
+            code:
+              slotCode,
+
+            isActive:
+              true,
+          },
+        }),
+      ]);
+
+    if (!address) {
+      throw new BadRequestException(
+        "Selected address is invalid.",
+      );
+    }
+
+    if (!slot) {
+      throw new BadRequestException(
+        "Selected pickup slot is invalid.",
+      );
+    }
+
+    const serviceability =
+      await this.prisma.serviceablePincode.findUnique({
+        where: {
+          pincode:
+            address.pincode,
+        },
+
+        select: {
+          id:
+            true,
+
+          isActive:
+            true,
+        },
+      });
+
+    if (
+      serviceability?.isActive !==
+      true
+    ) {
+      throw new BadRequestException(
+        "Pickup is currently unavailable for the selected pincode.",
+      );
+    }
+
+    const orderNumber =
+      this.orderNumber();
+
+    const duplicateLockKey =
+      `celltro-order:${customer.id}:${productId}:${variantId}`;
+
+    const order =
+      await this.prisma.$transaction(
+        async (
+          tx,
+        ) => {
+          /*
+           * PostgreSQL transaction advisory lock.
+           * Same customer + product + variant order
+           * requests are serialized even across
+           * multiple backend instances.
+           */
+          await tx.$queryRaw<Array<{ lock_result: string | null }>>`
+            SELECT pg_advisory_xact_lock(
+              hashtext(${duplicateLockKey})
+            )::text AS lock_result
+          `;
+
+          const existingActiveOrder =
+            await tx.sellOrder.findFirst({
+              where: {
+                customerId:
+                  customer.id,
+
+                productId,
+
+                variantId,
+
+                status: {
+                  notIn: [
+                    "COMPLETED",
+                    "CANCELLED",
+                  ],
+                },
+              },
+
+              select: {
+                orderNumber:
+                  true,
+
+                status:
+                  true,
+              },
+            });
+
+          if (
+            existingActiveOrder
+          ) {
+            throw new BadRequestException(
+              `An active order already exists for this device: ${existingActiveOrder.orderNumber}.`,
+            );
+          }
+
+          /*
+           * Re-check exact journey inside the
+           * same transaction before consuming it.
+           */
+          const freshEnquiry =
+            await tx.enquirySession.findFirst({
+              where: {
+                id:
+                  enquiry.id,
+
+                phone:
+                  verified.phone,
+
+                orderId:
+                  null,
+
+                identityVerifiedAt: {
+                  not:
+                    null,
+                },
+
+                quoteViewedAt: {
+                  not:
+                    null,
+                },
+
+                quoteAmount: {
+                  not:
+                    null,
+                },
+              },
+
+              select: {
+                id:
+                  true,
+
+                quoteAmount:
+                  true,
+              },
+            });
+
+          if (
+            !freshEnquiry
+          ) {
+            throw new BadRequestException(
+              "This quote has already been converted or is no longer valid.",
+            );
+          }
+
+          const authoritativeFinalPrice =
+            Number(
+              freshEnquiry.quoteAmount,
+            );
+
+          if (
+            !Number.isFinite(
+              authoritativeFinalPrice,
+            ) ||
+            authoritativeFinalPrice <
+              0
+          ) {
+            throw new BadRequestException(
+              "Stored quote is invalid.",
+            );
+          }
+
+          const createdOrder =
+            await tx.sellOrder.create({
+              data: {
+                orderNumber,
+
+                customerId:
+                  customer.id,
+
+                productId,
+                variantId,
+
+                productName:
+                  product.name,
+
+                productImage:
+                  product.imageUrl,
+
+                variantLabel,
+
+                basePrice,
+
+                totalDeduction:
+                  Math.max(
+                    0,
+                    basePrice -
+                      authoritativeFinalPrice,
+                  ),
+
+                finalPrice:
+                  authoritativeFinalPrice,
+
+                questionnaireSnapshot:
+                  (
+                    enquiry.questionnaireSnapshot ??
+                    undefined
+                  ) as any,
+
+                pickupDate,
+
+                pickupSlotId:
+                  slot.id,
+
+                payoutMethod:
+                  payoutMethod as
+                    | "CASH"
+                    | "UPI",
+
+                payoutUpiMobile,
+
+                addressSnapshot: {
+                  create: {
+                    sourceAddressId:
+                      address.id,
+
+                    fullName:
+                      address.fullName,
+
+                    phone:
+                      verified.phone,
+
+                    house:
+                      address.house,
+
+                    street:
+                      address.street,
+
+                    locality:
+                      address.locality,
+
+                    landmark:
+                      address.landmark,
+
+                    pincode:
+                      address.pincode,
+
+                    city:
+                      address.city,
+
+                    state:
+                      address.state,
+
+                    type:
+                      address.type,
+                  },
+                },
+
+                statusHistory: {
+                  create: {
+                    status:
+                      "PICKUP_REQUESTED",
+
+                    note:
+                      "Pickup request created by customer.",
+                  },
+                },
+              },
+
+              include: {
+                pickupSlot:
+                  true,
+
+                addressSnapshot:
+                  true,
+
+                statusHistory:
+                  true,
+
+                reschedules:
+                  true,
+              },
+            });
+
+          await this.routingService.autoAssignNewOrder(
+            tx,
+            {
+              orderId:
+                createdOrder.id,
+
+              serviceablePincodeId:
+                serviceability.id,
+            },
+          );
+
+          const linkResult =
+            await tx.enquirySession.updateMany({
+              where: {
+                id:
+                  enquiry.id,
+
+                orderId:
+                  null,
+              },
+
+              data: {
+                orderId:
+                  createdOrder.id,
+              },
+            });
+
+          if (
+            linkResult.count !==
+            1
+          ) {
+            throw new BadRequestException(
+              "This quote has already been converted. Please check your existing order.",
+            );
+          }
+
+          return createdOrder;
+        },
+      );
+
+    return this.toOrderView(
+      order,
+    );
+  }
+
+  async getOrder(
+    rawToken: string,
+    orderNumber: string,
+  ) {
+    const verified =
+      await this.requireVerifiedCustomer(
+        rawToken,
+      );
+
+    const order =
+      await this.prisma.sellOrder.findFirst({
+        where: {
+          orderNumber,
+
+          customer: {
+            is: {
+              phone:
+                verified.phone,
+            },
+          },
+        },
+
+        include: {
+          pickupSlot:
+            true,
+
+          addressSnapshot:
+            true,
+
+          statusHistory: {
+            orderBy: {
+              createdAt:
+                "asc",
+            },
+          },
+
+          reschedules: {
+            orderBy: {
+              createdAt:
+                "desc",
+            },
+          },
+
+          feedback:
+            true,
+        },
+      });
+
+    if (!order) {
+      throw new NotFoundException(
+        "Order not found.",
+      );
+    }
+
+    return this.toOrderView(
+      order,
+    );
+  }
+
+  async rescheduleOrder(
+    rawToken: string,
+    orderNumber: string,
+    body: any,
+  ) {
+    const verified =
+      await this.requireVerifiedCustomer(
+        rawToken,
+      );
+
+    const pickupDate =
+      this.dateOnly(
+        body?.pickupDate,
+      );
+
+    const slotCode =
+      String(
+        body?.pickupSlotCode ||
+          "",
+      ).trim();
+
+    const slot =
+      await this.prisma.pickupSlotTemplate.findFirst({
+        where: {
+          code:
+            slotCode,
+
+          isActive:
+            true,
+        },
+      });
+
+    if (!slot) {
+      throw new BadRequestException(
+        "Pickup slot not found.",
+      );
+    }
+
+    await this.prisma.$transaction(
+      async (
+        tx,
+      ) => {
+        await tx.$queryRaw<Array<{ lock_result: string | null }>>`
+          SELECT pg_advisory_xact_lock(
+            hashtext(${`celltro-order-action:${orderNumber}`})
+          )::text AS lock_result
+        `;
+
+        const order =
+          await tx.sellOrder.findFirst({
+            where: {
+              orderNumber,
+
+              customer: {
+                is: {
+                  phone:
+                    verified.phone,
+                },
+              },
+            },
+
+            include: {
+              pickupSlot:
+                true,
+            },
+          });
+
+        if (!order) {
+          throw new NotFoundException(
+            "Order not found.",
+          );
+        }
+
+        if (
+          [
+            "COMPLETED",
+            "CANCELLED",
+          ].includes(
+            order.status,
+          )
+        ) {
+          throw new BadRequestException(
+            "This order can no longer be rescheduled.",
+          );
+        }
+
+        await tx.orderRescheduleHistory.create({
+          data: {
+            orderId:
+              order.id,
+
+            oldPickupDate:
+              order.pickupDate,
+
+            newPickupDate:
+              pickupDate,
+
+            oldSlotLabel:
+              order.pickupSlot
+                .label,
+
+            newSlotLabel:
+              slot.label,
+          },
+        });
+
+        await tx.sellOrder.update({
+          where: {
+            id:
+              order.id,
+          },
+
+          data: {
+            pickupDate,
+
+            pickupSlotId:
+              slot.id,
+          },
+        });
+
+        await tx.orderStatusHistory.create({
+          data: {
+            orderId:
+              order.id,
+
+            status:
+              order.status,
+
+            note:
+              `Pickup rescheduled to ${slot.label}.`,
+          },
+        });
+      },
+    );
+
+    return this.getOrder(
+      rawToken,
+      orderNumber,
+    );
+  }
+
+  async cancelOrder(
+    rawToken: string,
+    orderNumber: string,
+    body?: {
+      reasonCode?: string;
+      reasonText?: string;
+    },
+  ) {
+    const verified =
+      await this.requireVerifiedCustomer(
+        rawToken,
+      );
+
+    const reasonCode =
+      this.optionalText(
+        body?.reasonCode,
+        80,
+      );
+
+    const reasonText =
+      this.optionalText(
+        body?.reasonText,
+        500,
+      );
+
+    const reason =
+      await this.getCustomerCancellationReason(
+        reasonCode,
+      );
+
+    if (
+      reason?.requiresFreeText &&
+      !reasonText
+    ) {
+      throw new BadRequestException(
+        "Please provide a reason for selecting Other.",
+      );
+    }
+
+    await this.prisma.$transaction(
+      async (
+        tx,
+      ) => {
+        await tx.$queryRaw<Array<{ lock_result: string | null }>>`
+          SELECT pg_advisory_xact_lock(
+            hashtext(${`celltro-order-action:${orderNumber}`})
+          )::text AS lock_result
+        `;
+
+        const order =
+          await tx.sellOrder.findFirst({
+            where: {
+              orderNumber,
+
+              customer: {
+                is: {
+                  phone:
+                    verified.phone,
+                },
+              },
+            },
+          });
+
+        if (!order) {
+          throw new NotFoundException(
+            "Order not found.",
+          );
+        }
+
+        if (
+          order.status ===
+          "COMPLETED"
+        ) {
+          throw new BadRequestException(
+            "Completed order cannot be cancelled.",
+          );
+        }
+
+        if (
+          order.status ===
+          "CANCELLED"
+        ) {
+          return;
+        }
+
+        const reasonSummary =
+          reasonText ||
+          reasonCode;
+
+        await tx.sellOrder.update({
+          where: {
+            id:
+              order.id,
+          },
+
+          data: {
+            status:
+              "CANCELLED",
+          },
+        });
+
+        await tx.orderStatusHistory.create({
+          data: {
+            orderId:
+              order.id,
+
+            status:
+              "CANCELLED",
+
+            note:
+              reasonSummary
+                ? `Pickup request cancelled by customer. Reason: ${reasonSummary}`
+                : "Pickup request cancelled by customer.",
+          },
+        });
+
+        await tx.orderCancellation.upsert({
+          where: {
+            orderId:
+              order.id,
+          },
+
+          update: {
+            actor:
+              "CUSTOMER",
+
+            reasonCode,
+            reasonText,
+          },
+
+          create: {
+            orderId:
+              order.id,
+
+            actor:
+              "CUSTOMER",
+
+            reasonCode,
+            reasonText,
+          },
+        });
+      },
+    );
+
+    return this.getOrder(
+      rawToken,
+      orderNumber,
+    );
+  }
+
+
+  async getCustomerFeedbackOptions() {
+    return this.prisma.customerFeedbackOption.findMany({
+      where: {
+        isActive:
+          true,
+      },
+
+      orderBy: [
+        {
+          displayOrder:
+            "asc",
+        },
+        {
+          id:
+            "asc",
+        },
+      ],
+
+      select: {
+        code: true,
+        label: true,
+        requiresFreeText: true,
+      },
+    });
+  }
+
+  async submitCustomerFeedback(
+    rawToken: string,
+    orderNumber: string,
+    body: {
+      rating?: number;
+      optionCode?: string;
+      feedbackText?: string;
+    },
+  ) {
+    const verified =
+      await this.requireVerifiedCustomer(
+        rawToken,
+      );
+
+    const order =
+      await this.prisma.sellOrder.findFirst({
+        where: {
+          orderNumber,
+
+          customer: {
+            is: {
+              phone:
+                verified.phone,
+            },
+          },
+        },
+
+        select: {
+          id:
+            true,
+
+          status:
+            true,
+        },
+      });
+
+    if (!order) {
+      throw new NotFoundException(
+        "Order not found.",
+      );
+    }
+
+    if (
+      order.status !==
+      "COMPLETED"
+    ) {
+      throw new BadRequestException(
+        "Feedback can be submitted only after the order is completed.",
+      );
+    }
+
+    const existing =
+      await this.prisma.orderFeedback.findUnique({
+        where: {
+          orderId:
+            order.id,
+        },
+
+        select: {
+          id:
+            true,
+        },
+      });
+
+    if (existing) {
+      throw new BadRequestException(
+        "Feedback has already been submitted for this order.",
+      );
+    }
+
+    const ratingRaw =
+      body?.rating;
+
+    let rating:
+      | number
+      | null =
+      null;
+
+    if (
+      ratingRaw !==
+      undefined &&
+      ratingRaw !==
+      null
+    ) {
+      const parsed =
+        Number(
+          ratingRaw,
+        );
+
+      if (
+        !Number.isInteger(
+          parsed,
+        ) ||
+        parsed < 1 ||
+        parsed > 5
+      ) {
+        throw new BadRequestException(
+          "Rating must be between 1 and 5.",
+        );
+      }
+
+      rating =
+        parsed;
+    }
+
+    const optionCode =
+      String(
+        body?.optionCode ||
+          "",
+      )
+        .trim()
+        .toUpperCase() ||
+      null;
+
+    const feedbackText =
+      this.optionalText(
+        body?.feedbackText,
+        1000,
+      );
+
+    let optionLabelSnapshot:
+      | string
+      | null =
+      null;
+
+    if (optionCode) {
+      const option =
+        await this.prisma.customerFeedbackOption.findUnique({
+          where: {
+            code:
+              optionCode,
+          },
+        });
+
+      if (
+        !option ||
+        !option.isActive
+      ) {
+        throw new BadRequestException(
+          "Invalid feedback option.",
+        );
+      }
+
+      if (
+        option.requiresFreeText &&
+        !feedbackText
+      ) {
+        throw new BadRequestException(
+          "Please provide feedback details for the selected option.",
+        );
+      }
+
+      optionLabelSnapshot =
+        option.label;
+    }
+
+    if (
+      rating ===
+        null &&
+      !optionCode &&
+      !feedbackText
+    ) {
+      throw new BadRequestException(
+        "Please provide a rating, select a feedback option, or enter feedback.",
+      );
+    }
+
+    return this.prisma.orderFeedback.create({
+      data: {
+        orderId:
+          order.id,
+
+        rating,
+        optionCode,
+        optionLabelSnapshot,
+        feedbackText,
+      },
+    });
+  }
+
+  private async buildOrderPdf(
+    order: any,
+  ) {
+    const pdf =
+      await PDFDocument.create();
+
+    const regular =
+      await pdf.embedFont(
+        StandardFonts.Helvetica,
+      );
+
+    const bold =
+      await pdf.embedFont(
+        StandardFonts.HelveticaBold,
+      );
+
+    const pageWidth =
+      595.28;
+
+    const pageHeight =
+      841.89;
+
+    const margin =
+      46;
+
+    const contentWidth =
+      pageWidth -
+      margin * 2;
+
+    let page =
+      pdf.addPage([
+        pageWidth,
+        pageHeight,
+      ]);
+
+    let y =
+      pageHeight -
+      margin;
+
+    const newPage =
+      () => {
+        page =
+          pdf.addPage([
+            pageWidth,
+            pageHeight,
+          ]);
+
+        y =
+          pageHeight -
+          margin;
+      };
+
+    const ensureSpace =
+      (
+        required:
+          number,
+      ) => {
+        if (
+          y -
+            required <
+          margin
+        ) {
+          newPage();
+        }
+      };
+
+    const wrap =
+      (
+        value:
+          unknown,
+        maxChars =
+          76,
+      ) => {
+        const text =
+          String(
+            value ??
+              "",
+          )
+            .replace(
+              /\s+/g,
+              " ",
+            )
+            .trim();
+
+        if (!text) {
+          return [
+            "-",
+          ];
+        }
+
+        const words =
+          text.split(
+            " ",
+          );
+
+        const lines:
+          string[] =
+          [];
+
+        let current =
+          "";
+
+        for (
+          const word of words
+        ) {
+          const next =
+            current
+              ? `${current} ${word}`
+              : word;
+
+          if (
+            next.length >
+              maxChars &&
+            current
+          ) {
+            lines.push(
+              current,
+            );
+
+            current =
+              word;
+          } else {
+            current =
+              next;
+          }
+        }
+
+        if (current) {
+          lines.push(
+            current,
+          );
+        }
+
+        return lines;
+      };
+
+    const drawText =
+      (
+        text:
+          string,
+        options?: {
+          size?: number;
+          strong?: boolean;
+          x?: number;
+          gapAfter?: number;
+          color?: {
+            r: number;
+            g: number;
+            b: number;
+          };
+        },
+      ) => {
+        const size =
+          options?.size ??
+          10;
+
+        const lineHeight =
+          size +
+          4;
+
+        ensureSpace(
+          lineHeight +
+            (
+              options?.gapAfter ??
+              0
+            ),
+        );
+
+        const color =
+          options?.color ??
+          {
+            r:
+              0.12,
+            g:
+              0.16,
+            b:
+              0.23,
+          };
+
+        page.drawText(
+          text,
+          {
+            x:
+              options?.x ??
+              margin,
+
+            y,
+            size,
+
+            font:
+              options?.strong
+                ? bold
+                : regular,
+
+            color:
+              rgb(
+                color.r,
+                color.g,
+                color.b,
+              ),
+          },
+        );
+
+        y -=
+          lineHeight +
+          (
+            options?.gapAfter ??
+            0
+          );
+      };
+
+    const drawWrapped =
+      (
+        value:
+          unknown,
+        options?: {
+          size?: number;
+          strong?: boolean;
+          x?: number;
+          maxChars?: number;
+          gapAfter?: number;
+        },
+      ) => {
+        const lines =
+          wrap(
+            value,
+            options?.maxChars ??
+              76,
+          );
+
+        for (
+          let index =
+            0;
+          index <
+          lines.length;
+          index++
+        ) {
+          drawText(
+            lines[index],
+            {
+              size:
+                options?.size,
+
+              strong:
+                options?.strong,
+
+              x:
+                options?.x,
+
+              gapAfter:
+                index ===
+                lines.length -
+                  1
+                  ? options?.gapAfter
+                  : 0,
+            },
+          );
+        }
+      };
+
+    const section =
+      (
+        title:
+          string,
+      ) => {
+        ensureSpace(
+          36,
+        );
+
+        y -=
+          8;
+
+        page.drawLine({
+          start: {
+            x:
+              margin,
+            y:
+              y +
+              9,
+          },
+
+          end: {
+            x:
+              pageWidth -
+              margin,
+            y:
+              y +
+              9,
+          },
+
+          thickness:
+            0.7,
+
+          color:
+            rgb(
+              0.88,
+              0.90,
+              0.93,
+            ),
+        });
+
+        drawText(
+          title,
+          {
+            size:
+              12,
+            strong:
+              true,
+            gapAfter:
+              5,
+          },
+        );
+      };
+
+    const labelValue =
+      (
+        label:
+          string,
+        value:
+          unknown,
+      ) => {
+        drawText(
+          label.toUpperCase(),
+          {
+            size:
+              7.5,
+            strong:
+              true,
+            color: {
+              r:
+                0.40,
+              g:
+                0.45,
+              b:
+                0.53,
+            },
+          },
+        );
+
+        drawWrapped(
+          value,
+          {
+            size:
+              10,
+            gapAfter:
+              5,
+          },
+        );
+      };
+
+    const formatDate =
+      (
+        value:
+          unknown,
+      ) => {
+        if (!value) {
+          return "-";
+        }
+
+        const date =
+          new Date(
+            String(
+              value,
+            ),
+          );
+
+        if (
+          Number.isNaN(
+            date.getTime(),
+          )
+        ) {
+          return "-";
+        }
+
+        return date.toLocaleDateString(
+          "en-IN",
+          {
+            day:
+              "2-digit",
+            month:
+              "short",
+            year:
+              "numeric",
+          },
+        );
+      };
+
+    const money =
+      (
+        value:
+          unknown,
+      ) =>
+        `INR ${Number(
+          value ??
+            0,
+        ).toLocaleString(
+          "en-IN",
+          {
+            maximumFractionDigits:
+              0,
+          },
+        )}`;
+
+    drawText(
+      "CELLTRO",
+      {
+        size:
+          22,
+        strong:
+          true,
+        gapAfter:
+          2,
+      },
+    );
+
+    drawText(
+      "ORDER SUMMARY",
+      {
+        size:
+          9,
+        strong:
+          true,
+        color: {
+          r:
+            0.03,
+          g:
+            0.45,
+          b:
+            0.35,
+        },
+        gapAfter:
+          10,
+      },
+    );
+
+    drawText(
+      `Order ID: ${order.orderNumber}`,
+      {
+        size:
+          15,
+        strong:
+          true,
+        gapAfter:
+          3,
+      },
+    );
+
+    drawWrapped(
+      `${order.productName}${
+        order.variantLabel
+          ? ` - ${order.variantLabel}`
+          : ""
+      }`,
+      {
+        size:
+          11,
+        strong:
+          true,
+        gapAfter:
+          8,
+      },
+    );
+
+    drawText(
+      `Status: ${String(
+        order.status ??
+          "",
+      ).replace(
+        /_/g,
+        " ",
+      )}`,
+      {
+        size:
+          10,
+        strong:
+          true,
+      },
+    );
+
+    section(
+      "ORDER DETAILS",
+    );
+
+    labelValue(
+      "Expected Value",
+      money(
+        order.finalPrice,
+      ),
+    );
+
+    labelValue(
+      "Pickup Date",
+      formatDate(
+        order.pickupDate,
+      ),
+    );
+
+    labelValue(
+      "Pickup Slot",
+      order.pickupSlot
+        ?.label ??
+        "-",
+    );
+
+    labelValue(
+      "Payout Method",
+      order.payoutMethod ??
+        "-",
+    );
+
+    if (
+      order.address
+    ) {
+      section(
+        "PICKUP ADDRESS",
+      );
+
+      labelValue(
+        "Customer",
+        order.address.fullName ??
+          "-",
+      );
+
+      const addressLine =
+        [
+          order.address
+            .house,
+          order.address
+            .street,
+          order.address
+            .locality,
+          order.address
+            .landmark,
+        ]
+          .filter(
+            Boolean,
+          )
+          .join(
+            ", ",
+          );
+
+      labelValue(
+        "Address",
+        addressLine ||
+          "-",
+      );
+
+      labelValue(
+        "District / State / Pincode",
+        [
+          order.address
+            .city,
+          order.address
+            .state,
+          order.address
+            .pincode,
+        ]
+          .filter(
+            Boolean,
+          )
+          .join(
+            ", ",
+          ) ||
+          "-",
+      );
+
+      labelValue(
+        "Verified Mobile",
+        order.address
+          .phone ??
+          "-",
+      );
+    }
+
+    section(
+      "ORDER TIMELINE",
+    );
+
+    const history =
+      Array.isArray(
+        order.statusHistory,
+      )
+        ? order.statusHistory
+        : [];
+
+    if (
+      history.length ===
+      0
+    ) {
+      drawText(
+        "No status history available.",
+        {
+          size:
+            9,
+        },
+      );
+    } else {
+      for (
+        const item of history
+      ) {
+        ensureSpace(
+          52,
+        );
+
+        drawWrapped(
+          `${formatDate(
+            item.createdAt,
+          )} - ${String(
+            item.status ??
+              "",
+          ).replace(
+            /_/g,
+            " ",
+          )}`,
+          {
+            size:
+              9,
+            strong:
+              true,
+            gapAfter:
+              1,
+          },
+        );
+
+        if (
+          item.note
+        ) {
+          drawWrapped(
+            item.note,
+            {
+              size:
+                8.5,
+              maxChars:
+                85,
+              gapAfter:
+                5,
+            },
+          );
+        }
+      }
+    }
+
+    if (
+      order.feedback
+    ) {
+      section(
+        "CUSTOMER FEEDBACK",
+      );
+
+      labelValue(
+        "Rating",
+        order.feedback
+          .rating
+          ? `${order.feedback.rating}/5`
+          : "-",
+      );
+
+      labelValue(
+        "Response",
+        order.feedback
+          .optionLabel ??
+          "-",
+      );
+
+      labelValue(
+        "Comment",
+        order.feedback
+          .feedbackText ??
+          "-",
+      );
+    }
+
+    ensureSpace(
+      55,
+    );
+
+    y -=
+      12;
+
+    page.drawLine({
+      start: {
+        x:
+          margin,
+        y:
+          y +
+          8,
+      },
+
+      end: {
+        x:
+          pageWidth -
+          margin,
+        y:
+          y +
+          8,
+      },
+
+      thickness:
+        0.7,
+
+      color:
+        rgb(
+          0.88,
+          0.90,
+          0.93,
+        ),
+    });
+
+    drawText(
+      "This document is generated from the Celltro order record.",
+      {
+        size:
+          8,
+        color: {
+          r:
+            0.45,
+          g:
+            0.49,
+          b:
+            0.56,
+        },
+      },
+    );
+
+    drawText(
+      `Generated: ${new Date().toISOString()}`,
+      {
+        size:
+          7.5,
+        color: {
+          r:
+            0.45,
+          g:
+            0.49,
+          b:
+            0.56,
+        },
+      },
+    );
+
+    return pdf.save();
+  }
+
+  async getCustomerOrderHistory(
+    rawToken: string,
+  ) {
+    const verified =
+      await this.requireVerifiedCustomer(
+        rawToken,
+      );
+
+    const customer =
+      await this.prisma.customer.findUnique({
+        where: {
+          phone:
+            verified.phone,
+        },
+      });
+
+    if (!customer) {
+      return [];
+    }
+
+    const orders =
+      await this.prisma.sellOrder.findMany({
+        where: {
+          customerId:
+            customer.id,
+        },
+
+        orderBy: {
+          createdAt:
+            "desc",
+        },
+
+        select: {
+          orderNumber:
+            true,
+          status:
+            true,
+          productName:
+            true,
+          variantLabel:
+            true,
+          finalPrice:
+            true,
+          pickupDate:
+            true,
+          createdAt:
+            true,
+        },
+      });
+
+    return orders.map(
+      (order) => ({
+        ...order,
+        finalPrice:
+          Number(
+            order.finalPrice,
+          ),
+      }),
+    );
+  }
+
+  async generateCustomerOrderPdf(
+    rawToken: string,
+    orderNumber: string,
+  ) {
+    const order =
+      await this.getOrder(
+        rawToken,
+        orderNumber,
+      );
+
+    if (
+      order.status !==
+      "COMPLETED"
+    ) {
+      throw new BadRequestException(
+        "Order PDF is available only after the order is completed.",
+      );
+    }
+
+    return this.buildOrderPdf(
+      order,
+    );
+  }
+
+  /*
+   * Kept as a service-only method for the Admin Orders module.
+   * Do NOT expose this from an unauthenticated controller.
+   * A protected Admin/RBAC controller can call this later.
+   */
+  async generateAdminOrderPdf(
+    orderNumber: string,
+  ) {
+    const order =
+      await this.prisma.sellOrder.findUnique({
+        where: {
+          orderNumber,
+        },
+
+        include: {
+          pickupSlot:
+            true,
+
+          addressSnapshot:
+            true,
+
+          statusHistory: {
+            orderBy: {
+              createdAt:
+                "asc",
+            },
+          },
+
+          reschedules: {
+            orderBy: {
+              createdAt:
+                "desc",
+            },
+          },
+
+          feedback:
+            true,
+        },
+      });
+
+    if (!order) {
+      throw new NotFoundException(
+        "Order not found.",
+      );
+    }
+
+    return this.buildOrderPdf(
+      this.toOrderView(
+        order,
+      ),
+    );
+  }
+
+  private toOrderView(
+    order: any,
+  ) {
+    const address =
+      order.addressSnapshot;
+
+    return {
+      orderNumber:
+        order.orderNumber,
+
+      status:
+        order.status,
+
+      productId:
+        order.productId,
+
+      variantId:
+        order.variantId,
+
+      productName:
+        order.productName,
+
+      productImage:
+        order.productImage,
+
+      variantLabel:
+        order.variantLabel,
+
+      basePrice:
+        Number(
+          order.basePrice,
+        ),
+
+      totalDeduction:
+        Number(
+          order.totalDeduction,
+        ),
+
+      finalPrice:
+        Number(
+          order.finalPrice,
+        ),
+
+      pickupDate:
+        order.pickupDate,
+
+      pickupSlot: {
+        code:
+          order.pickupSlot.code,
+
+        label:
+          order.pickupSlot.label,
+      },
+
+      payoutMethod:
+        order.payoutMethod,
+
+      payoutUpiMobile:
+        order.payoutUpiMobile,
+
+      address:
+        address
+          ? {
+              fullName:
+                address.fullName,
+
+              phone:
+                address.phone,
+
+              house:
+                address.house,
+
+              street:
+                address.street,
+
+              locality:
+                address.locality,
+
+              landmark:
+                address.landmark,
+
+              pincode:
+                address.pincode,
+
+              city:
+                address.city,
+
+              state:
+                address.state,
+
+              type:
+                address.type ===
+                "HOME"
+                  ? "Home"
+                  : address.type ===
+                      "OFFICE"
+                    ? "Office"
+                    : "Other",
+            }
+          : null,
+
+      statusHistory:
+        (
+          order.statusHistory ||
+          []
+        ).map(
+          (
+            item: any,
+          ) => ({
+            id:
+              item.id,
+
+            status:
+              item.status,
+
+            note:
+              item.note,
+
+            createdAt:
+              item.createdAt,
+          }),
+        ),
+
+      reschedules:
+        (
+          order.reschedules ||
+          []
+        ).map(
+          (
+            item: any,
+          ) => ({
+            id:
+              item.id,
+
+            oldPickupDate:
+              item.oldPickupDate,
+
+            newPickupDate:
+              item.newPickupDate,
+
+            oldSlotLabel:
+              item.oldSlotLabel,
+
+            newSlotLabel:
+              item.newSlotLabel,
+
+            createdAt:
+              item.createdAt,
+          }),
+        ),
+
+      feedback:
+        order.feedback
+          ? {
+              rating:
+                order.feedback.rating,
+
+              optionCode:
+                order.feedback.optionCode,
+
+              optionLabel:
+                order.feedback.optionLabelSnapshot,
+
+              feedbackText:
+                order.feedback.feedbackText,
+
+              createdAt:
+                order.feedback.createdAt,
+            }
+          : null,
+
+      createdAt:
+        order.createdAt,
+
+      updatedAt:
+        order.updatedAt,
+    };
+  }
+}
+
+===== FILE: .\src\orders\orders.module.ts =====
+
+import { Module } from "@nestjs/common";
+
+import { PrismaService } from "../prisma/prisma/prisma.service.js";
+import { RoutingService } from "../routing/routing.service.js";
+
+import { OrdersController } from "./orders.controller.js";
+import { OrdersService } from "./orders.service.js";
+
+@Module({
+  controllers: [
+    OrdersController,
+  ],
+
+  providers: [
+    OrdersService,
+    RoutingService,
+    PrismaService,
+  ],
+
+  exports: [
+    OrdersService,
+  ],
+})
+export class OrdersModule {}
+
+===== FILE: .\src\routing\routing.service.ts =====
+
+import {
+  Injectable,
+} from "@nestjs/common";
+
+import type {
+  Prisma,
+} from "../generated/prisma/client.js";
+
+type TransactionClient =
+  Prisma.TransactionClient;
+
+type AutoAssignNewOrderInput = {
+  orderId: string;
+  serviceablePincodeId: number;
+};
+
+type AutoAssignNewOrderResult =
+  | {
+      assigned: false;
+      vendorId: null;
+      priority: null;
+    }
+  | {
+      assigned: true;
+      vendorId: number;
+      priority: number;
+    };
+
+@Injectable()
+export class RoutingService {
+  async autoAssignNewOrder(
+    tx: TransactionClient,
+    input: AutoAssignNewOrderInput,
+  ): Promise<AutoAssignNewOrderResult> {
+    const eligibleMapping =
+      await tx.vendorServiceArea.findFirst({
+        where: {
+          serviceablePincodeId:
+            input.serviceablePincodeId,
+
+          isActive: true,
+
+          serviceablePincode: {
+            is: {
+              isActive: true,
+            },
+          },
+
+          vendor: {
+            is: {
+              status: "ACTIVE",
+            },
+          },
+        },
+
+        orderBy: [
+          {
+            priority: "asc",
+          },
+          {
+            vendorId: "asc",
+          },
+        ],
+
+        select: {
+          vendorId: true,
+          priority: true,
+        },
+      });
+
+    if (!eligibleMapping) {
+      return {
+        assigned: false,
+        vendorId: null,
+        priority: null,
+      };
+    }
+
+    await tx.sellOrder.update({
+      where: {
+        id: input.orderId,
+      },
+
+      data: {
+        currentVendorId:
+          eligibleMapping.vendorId,
+      },
+
+      select: {
+        id: true,
+      },
+    });
+
+    await tx.orderVendorAssignment.create({
+      data: {
+        orderId:
+          input.orderId,
+
+        vendorId:
+          eligibleMapping.vendorId,
+
+        source:
+          "AUTO",
+
+        reason:
+          "PINCODE_PRIORITY",
+
+        prioritySnapshot:
+          eligibleMapping.priority,
+      },
+
+      select: {
+        id: true,
+      },
+    });
+
+    return {
+      assigned: true,
+      vendorId:
+        eligibleMapping.vendorId,
+      priority:
+        eligibleMapping.priority,
+    };
+  }
+}
+
+===== FILE: .\src\super-admin\routing\super-admin-routing.controller.ts =====
+
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+} from "@nestjs/common";
+
+import {
+  SuperAdminRoutingService,
+} from "./super-admin-routing.service.js";
+
+@Controller("super-admin/routing")
+export class SuperAdminRoutingController {
+  constructor(
+    private readonly routingService:
+      SuperAdminRoutingService,
+  ) {}
+
+  @Get("summary")
+  summary() {
+    return this.routingService.summary();
+  }
+
+  @Get("service-areas")
+  listServiceAreas(
+    @Query("search")
+    search?: string,
+
+    @Query("coverage")
+    coverage?: string,
+
+    @Query("page")
+    page?: string,
+
+    @Query("limit")
+    limit?: string,
+  ) {
+    return this.routingService
+      .listServiceAreas({
+        search,
+        coverage,
+        page,
+        limit,
+      });
+  }
+
+  @Get("service-areas/:pincodeId/vendors")
+  getServiceAreaVendors(
+    @Param("pincodeId")
+    pincodeId: string,
+  ) {
+    return this.routingService
+      .getServiceAreaVendors(
+        pincodeId,
+      );
+  }
+
+  @Get("service-areas/:pincodeId/eligible-vendors")
+  listEligibleVendors(
+    @Param("pincodeId")
+    pincodeId: string,
+
+    @Query("search")
+    search?: string,
+  ) {
+    return this.routingService
+      .listEligibleVendors(
+        pincodeId,
+        search,
+      );
+  }
+
+  @Get("orders")
+  listOrders(
+    @Query("search")
+    search?: string,
+
+    @Query("assignment")
+    assignment?: string,
+
+    @Query("page")
+    page?: string,
+
+    @Query("limit")
+    limit?: string,
+  ) {
+    return this.routingService
+      .listOrders({
+        search,
+        assignment,
+        page,
+        limit,
+      });
+  }
+
+  @Get("orders/:orderNumber/history")
+  getOrderHistory(
+    @Param("orderNumber")
+    orderNumber: string,
+  ) {
+    return this.routingService
+      .getOrderHistory(
+        orderNumber,
+      );
+  }
+
+  @Get("orders/:orderNumber")
+  getOrder(
+    @Param("orderNumber")
+    orderNumber: string,
+  ) {
+    return this.routingService
+      .getOrder(
+        orderNumber,
+      );
+  }
+
+  @Post("orders/:orderNumber/assign")
+  assignOrder(
+    @Param("orderNumber")
+    orderNumber: string,
+
+    @Body()
+    body: {
+      vendorId?: unknown;
+    },
+  ) {
+    return this.routingService
+      .assignOrder(
+        orderNumber,
+        body,
+      );
+  }
+
+  @Post("orders/:orderNumber/reroute")
+  rerouteOrder(
+    @Param("orderNumber")
+    orderNumber: string,
+
+    @Body()
+    body: {
+      vendorId?: unknown;
+    },
+  ) {
+    return this.routingService
+      .rerouteOrder(
+        orderNumber,
+        body,
+      );
+  }
+}
+
+===== FILE: .\src\super-admin\routing\super-admin-routing.service.ts =====
+
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+
+import {
+  OrderVendorAssignmentReason,
+  OrderVendorAssignmentSource,
+  OrderVendorUnassignmentReason,
+  SellOrderStatus,
+  VendorStatus,
+} from "../../generated/prisma/enums.js";
+
+import {
+  PrismaService,
+} from "../../prisma/prisma/prisma.service.js";
+
+import type {
+  Prisma,
+} from "../../generated/prisma/client.js";
+
+const REROUTABLE_STATUSES =
+  new Set<SellOrderStatus>([
+    SellOrderStatus.PICKUP_REQUESTED,
+    SellOrderStatus.PICKUP_CONFIRMED,
+  ]);
+
+type OrderRoutingActionInput = {
+  vendorId?: unknown;
+};
+
+@Injectable()
+export class SuperAdminRoutingService {
+  constructor(
+    private readonly prisma: PrismaService,
+  ) {}
+
+  private parsePositiveInt(
+    value: unknown,
+    fieldName: string,
+  ) {
+    const parsed = Number(value);
+
+    if (
+      !Number.isInteger(parsed) ||
+      parsed <= 0
+    ) {
+      throw new BadRequestException(
+        `Invalid ${fieldName}.`,
+      );
+    }
+
+    return parsed;
+  }
+
+  private parsePagination(
+    pageInput: unknown,
+    limitInput: unknown,
+  ) {
+    const page = Math.max(
+      1,
+      Number(pageInput) || 1,
+    );
+
+    const requestedLimit =
+      Number(limitInput) || 20;
+
+    const limit = Math.min(
+      100,
+      Math.max(1, requestedLimit),
+    );
+
+    return {
+      page,
+      limit,
+      skip:
+        (page - 1) * limit,
+    };
+  }
+
+  private normalizeSearch(
+    value: unknown,
+  ) {
+    return String(value ?? "")
+      .trim()
+      .slice(0, 100);
+  }
+
+  private parseAssignmentFilter(
+    value: unknown,
+  ) {
+    const normalized =
+      String(value ?? "ALL")
+        .trim()
+        .toUpperCase();
+
+    if (
+      ![
+        "ALL",
+        "ASSIGNED",
+        "UNASSIGNED",
+      ].includes(normalized)
+    ) {
+      throw new BadRequestException(
+        "Invalid assignment filter.",
+      );
+    }
+
+    return normalized as
+      | "ALL"
+      | "ASSIGNED"
+      | "UNASSIGNED";
+  }
+
+  private async lockOrder(
+    // tx: Parameters<
+    //   Parameters<
+        // PrismaService["$transaction"]
+    //   >[0]
+    // >[0],
+    tx: Prisma.TransactionClient,
+    orderId: string,
+  ) {
+    await tx.$queryRaw<
+      Array<{
+        lock_result: string | null;
+      }>
+    >`
+      SELECT pg_advisory_xact_lock(
+        hashtext(${`celltro-order-routing:${orderId}`})
+      )::text AS lock_result
+    `;
+  }
+
+  async summary() {
+    const [
+      serviceablePincodes,
+      coveredPincodes,
+      assignedOrders,
+      unassignedOrders,
+    ] = await this.prisma.$transaction([
+      this.prisma.serviceablePincode.count({
+        where: {
+          isActive: true,
+        },
+      }),
+
+      this.prisma.serviceablePincode.count({
+        where: {
+          isActive: true,
+
+          vendorMappings: {
+            some: {
+              isActive: true,
+
+              vendor: {
+                status:
+                  VendorStatus.ACTIVE,
+              },
+            },
+          },
+        },
+      }),
+
+      this.prisma.sellOrder.count({
+        where: {
+          currentVendorId: {
+            not: null,
+          },
+
+          status: {
+            notIn: [
+              SellOrderStatus.COMPLETED,
+              SellOrderStatus.CANCELLED,
+            ],
+          },
+        },
+      }),
+
+      this.prisma.sellOrder.count({
+        where: {
+          currentVendorId: null,
+
+          status: {
+            notIn: [
+              SellOrderStatus.COMPLETED,
+              SellOrderStatus.CANCELLED,
+            ],
+          },
+        },
+      }),
+    ]);
+
+    return {
+      serviceablePincodes,
+      coveredPincodes,
+
+      uncoveredPincodes:
+        Math.max(
+          0,
+          serviceablePincodes -
+            coveredPincodes,
+        ),
+
+      assignedOpenOrders:
+        assignedOrders,
+
+      unassignedOpenOrders:
+        unassignedOrders,
+    };
+  }
+
+  async listServiceAreas(
+    query: {
+      search?: unknown;
+      coverage?: unknown;
+      page?: unknown;
+      limit?: unknown;
+    },
+  ) {
+    const {
+      page,
+      limit,
+      skip,
+    } = this.parsePagination(
+      query.page,
+      query.limit,
+    );
+
+    const search =
+      this.normalizeSearch(
+        query.search,
+      );
+
+    const coverage =
+      String(query.coverage ?? "ALL")
+        .trim()
+        .toUpperCase();
+
+    if (
+      ![
+        "ALL",
+        "COVERED",
+        "UNCOVERED",
+      ].includes(coverage)
+    ) {
+      throw new BadRequestException(
+        "Invalid coverage filter.",
+      );
+    }
+
+    const activeVendorMappingWhere = {
+      isActive: true,
+
+      vendor: {
+        status:
+          VendorStatus.ACTIVE,
+      },
+    };
+
+    const where = {
+      isActive: true,
+
+      ...(search
+        ? {
+            OR: [
+              {
+                pincode: {
+                  contains: search,
+                },
+              },
+              {
+                district: {
+                  contains: search,
+                  mode:
+                    "insensitive" as const,
+                },
+              },
+              {
+                state: {
+                  contains: search,
+                  mode:
+                    "insensitive" as const,
+                },
+              },
+            ],
+          }
+        : {}),
+
+      ...(coverage === "COVERED"
+        ? {
+            vendorMappings: {
+              some:
+                activeVendorMappingWhere,
+            },
+          }
+        : {}),
+
+      ...(coverage === "UNCOVERED"
+        ? {
+            vendorMappings: {
+              none:
+                activeVendorMappingWhere,
+            },
+          }
+        : {}),
+    };
+
+    const [
+      rows,
+      total,
+    ] = await this.prisma.$transaction([
+      this.prisma.serviceablePincode
+        .findMany({
+          where,
+
+          skip,
+          take: limit,
+
+          orderBy: {
+            pincode: "asc",
+          },
+
+          select: {
+            id: true,
+            pincode: true,
+            district: true,
+            state: true,
+            isActive: true,
+
+            vendorMappings: {
+              where:
+                activeVendorMappingWhere,
+
+              orderBy: [
+                {
+                  priority: "asc",
+                },
+                {
+                  vendorId: "asc",
+                },
+              ],
+
+              select: {
+                id: true,
+                priority: true,
+
+                vendor: {
+                  select: {
+                    id: true,
+                    vendorCode: true,
+                    businessName: true,
+                    status: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+
+      this.prisma.serviceablePincode
+        .count({
+          where,
+        }),
+    ]);
+
+    return {
+      data:
+        rows.map((row) => ({
+          id: row.id,
+          pincode: row.pincode,
+          district: row.district,
+          state: row.state,
+          isActive: row.isActive,
+
+          coverageCount:
+            row.vendorMappings.length,
+
+          coverage:
+            row.vendorMappings.length === 0
+              ? "NO_COVERAGE"
+              : row.vendorMappings.length === 1
+                ? "SINGLE_COVERAGE"
+                : "MULTI_COVERAGE",
+
+          vendors:
+            row.vendorMappings.map(
+              (mapping) => ({
+                mappingId:
+                  mapping.id,
+
+                priority:
+                  mapping.priority,
+
+                ...mapping.vendor,
+              }),
+            ),
+        })),
+
+      pagination: {
+        page,
+        limit,
+        total,
+
+        totalPages:
+          Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getServiceAreaVendors(
+    pincodeIdInput: unknown,
+  ) {
+    const pincodeId =
+      this.parsePositiveInt(
+        pincodeIdInput,
+        "pincode id",
+      );
+
+    const area =
+      await this.prisma
+        .serviceablePincode
+        .findUnique({
+          where: {
+            id: pincodeId,
+          },
+
+          select: {
+            id: true,
+            pincode: true,
+            district: true,
+            state: true,
+            isActive: true,
+
+            vendorMappings: {
+              orderBy: [
+                {
+                  isActive: "desc",
+                },
+                {
+                  priority: "asc",
+                },
+                {
+                  vendorId: "asc",
+                },
+              ],
+
+              select: {
+                id: true,
+                priority: true,
+                isActive: true,
+
+                vendor: {
+                  select: {
+                    id: true,
+                    vendorCode: true,
+                    businessName: true,
+                    contactName: true,
+                    status: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+
+    if (!area) {
+      throw new NotFoundException(
+        "Service area not found.",
+      );
+    }
+
+    return area;
+  }
+
+  async listEligibleVendors(
+    pincodeIdInput: unknown,
+    searchInput?: unknown,
+  ) {
+    const pincodeId =
+      this.parsePositiveInt(
+        pincodeIdInput,
+        "pincode id",
+      );
+
+    const search =
+      this.normalizeSearch(
+        searchInput,
+      );
+
+    const area =
+      await this.prisma
+        .serviceablePincode
+        .findUnique({
+          where: {
+            id: pincodeId,
+          },
+
+          select: {
+            id: true,
+            isActive: true,
+          },
+        });
+
+    if (!area) {
+      throw new NotFoundException(
+        "Service area not found.",
+      );
+    }
+
+    if (!area.isActive) {
+      return [];
+    }
+
+    return this.prisma
+      .vendorServiceArea
+      .findMany({
+        where: {
+          serviceablePincodeId:
+            pincodeId,
+
+          isActive: true,
+
+          vendor: {
+            status:
+              VendorStatus.ACTIVE,
+
+            ...(search
+              ? {
+                  OR: [
+                    {
+                      vendorCode: {
+                        contains:
+                          search,
+
+                        mode:
+                          "insensitive",
+                      },
+                    },
+                    {
+                      businessName: {
+                        contains:
+                          search,
+
+                        mode:
+                          "insensitive",
+                      },
+                    },
+                  ],
+                }
+              : {}),
+          },
+        },
+
+        take: 50,
+
+        orderBy: [
+          {
+            priority: "asc",
+          },
+          {
+            vendorId: "asc",
+          },
+        ],
+
+        select: {
+          priority: true,
+
+          vendor: {
+            select: {
+              id: true,
+              vendorCode: true,
+              businessName: true,
+              status: true,
+            },
+          },
+        },
+      })
+      .then((rows) =>
+        rows.map((row) => ({
+          ...row.vendor,
+          priority:
+            row.priority,
+        })),
+      );
+  }
+
+  async listOrders(
+    query: {
+      search?: unknown;
+      assignment?: unknown;
+      page?: unknown;
+      limit?: unknown;
+    },
+  ) {
+    const {
+      page,
+      limit,
+      skip,
+    } = this.parsePagination(
+      query.page,
+      query.limit,
+    );
+
+    const search =
+      this.normalizeSearch(
+        query.search,
+      );
+
+    const assignment =
+      this.parseAssignmentFilter(
+        query.assignment,
+      );
+
+    const where = {
+      ...(assignment === "ASSIGNED"
+        ? {
+            currentVendorId: {
+              not: null,
+            },
+          }
+        : {}),
+
+      ...(assignment === "UNASSIGNED"
+        ? {
+            currentVendorId: null,
+          }
+        : {}),
+
+      ...(search
+        ? {
+            OR: [
+              {
+                orderNumber: {
+                  contains: search,
+                  mode:
+                    "insensitive" as const,
+                },
+              },
+              {
+                productName: {
+                  contains: search,
+                  mode:
+                    "insensitive" as const,
+                },
+              },
+              {
+                addressSnapshot: {
+                  is: {
+                    pincode: {
+                      contains: search,
+                    },
+                  },
+                },
+              },
+              {
+                currentVendor: {
+                  is: {
+                    OR: [
+                      {
+                        vendorCode: {
+                          contains:
+                            search,
+
+                          mode:
+                            "insensitive" as const,
+                        },
+                      },
+                      {
+                        businessName: {
+                          contains:
+                            search,
+
+                          mode:
+                            "insensitive" as const,
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [
+      rows,
+      total,
+    ] = await this.prisma.$transaction([
+      this.prisma.sellOrder.findMany({
+        where,
+
+        skip,
+        take: limit,
+
+        orderBy: [
+          {
+            createdAt: "desc",
+          },
+          {
+            id: "desc",
+          },
+        ],
+
+        select: {
+          id: true,
+          orderNumber: true,
+          productName: true,
+          productImage: true,
+          variantLabel: true,
+          finalPrice: true,
+          status: true,
+          pickupDate: true,
+          createdAt: true,
+
+          addressSnapshot: {
+            select: {
+              pincode: true,
+              city: true,
+              state: true,
+            },
+          },
+
+          currentVendor: {
+            select: {
+              id: true,
+              vendorCode: true,
+              businessName: true,
+              status: true,
+            },
+          },
+
+          vendorAssignments: {
+            where: {
+              unassignedAt: null,
+            },
+
+            take: 1,
+
+            orderBy: {
+              assignedAt: "desc",
+            },
+
+            select: {
+              source: true,
+              reason: true,
+              assignedAt: true,
+              prioritySnapshot: true,
+            },
+          },
+        },
+      }),
+
+      this.prisma.sellOrder.count({
+        where,
+      }),
+    ]);
+
+    return {
+      data:
+        rows.map((row) => ({
+          id: row.id,
+          orderNumber:
+            row.orderNumber,
+          productName:
+            row.productName,
+          productImage:
+            row.productImage,
+          variantLabel:
+            row.variantLabel,
+          finalPrice:
+            row.finalPrice,
+          status:
+            row.status,
+          pickupDate:
+            row.pickupDate,
+          createdAt:
+            row.createdAt,
+
+          address:
+            row.addressSnapshot,
+
+          vendor:
+            row.currentVendor,
+
+          routing:
+            row.vendorAssignments[0] ??
+            null,
+        })),
+
+      pagination: {
+        page,
+        limit,
+        total,
+
+        totalPages:
+          Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getOrder(
+    orderNumberInput: unknown,
+  ) {
+    const orderNumber =
+      String(orderNumberInput ?? "")
+        .trim()
+        .slice(0, 100);
+
+    if (!orderNumber) {
+      throw new BadRequestException(
+        "Order number is required.",
+      );
+    }
+
+    const order =
+      await this.prisma.sellOrder.findUnique({
+        where: {
+          orderNumber,
+        },
+
+        select: {
+          id: true,
+          orderNumber: true,
+          productId: true,
+          variantId: true,
+          productName: true,
+          productImage: true,
+          variantLabel: true,
+          basePrice: true,
+          totalDeduction: true,
+          finalPrice: true,
+          status: true,
+          pickupDate: true,
+          payoutMethod: true,
+          createdAt: true,
+          updatedAt: true,
+
+          addressSnapshot: {
+            select: {
+              fullName: true,
+              phone: true,
+              house: true,
+              street: true,
+              locality: true,
+              landmark: true,
+              pincode: true,
+              city: true,
+              state: true,
+              type: true,
+            },
+          },
+
+          currentVendor: {
+            select: {
+              id: true,
+              vendorCode: true,
+              businessName: true,
+              contactName: true,
+              phone: true,
+              email: true,
+              status: true,
+            },
+          },
+
+          pickupSlot: {
+            select: {
+              code: true,
+              label: true,
+              startTime: true,
+              endTime: true,
+            },
+          },
+        },
+      });
+
+    if (!order) {
+      throw new NotFoundException(
+        "Order not found.",
+      );
+    }
+
+    return order;
+  }
+
+  async getOrderHistory(
+    orderNumberInput: unknown,
+  ) {
+    const orderNumber =
+      String(orderNumberInput ?? "")
+        .trim()
+        .slice(0, 100);
+
+    const order =
+      await this.prisma.sellOrder.findUnique({
+        where: {
+          orderNumber,
+        },
+
+        select: {
+          id: true,
+          orderNumber: true,
+
+          vendorAssignments: {
+            orderBy: [
+              {
+                assignedAt: "desc",
+              },
+              {
+                id: "desc",
+              },
+            ],
+
+            select: {
+              id: true,
+              source: true,
+              reason: true,
+              prioritySnapshot: true,
+              assignedAt: true,
+              unassignedAt: true,
+              unassignmentReason: true,
+
+              vendor: {
+                select: {
+                  id: true,
+                  vendorCode: true,
+                  businessName: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+    if (!order) {
+      throw new NotFoundException(
+        "Order not found.",
+      );
+    }
+
+    return {
+      orderNumber:
+        order.orderNumber,
+
+      history:
+        order.vendorAssignments,
+    };
+  }
+
+  private async assignInsideTransaction(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    vendorId: number,
+    // source: OrderVendorAssignmentSource.MANUAL
+    //   | OrderVendorAssignmentSource.REROUTE,
+    // reason:
+    //   | OrderVendorAssignmentReason.MANUAL_ADMIN
+    //   | OrderVendorAssignmentReason.REROUTE,
+    source: OrderVendorAssignmentSource,
+    reason: OrderVendorAssignmentReason,
+  ) {
+    await this.lockOrder(
+      tx,
+      orderId,
+    );
+
+    const order =
+      await tx.sellOrder.findUnique({
+        where: {
+          id: orderId,
+        },
+
+        select: {
+          id: true,
+          orderNumber: true,
+          status: true,
+          currentVendorId: true,
+
+          addressSnapshot: {
+            select: {
+              pincode: true,
+            },
+          },
+        },
+      });
+
+    if (!order) {
+      throw new NotFoundException(
+        "Order not found.",
+      );
+    }
+
+    if (
+      !REROUTABLE_STATUSES.has(
+        order.status,
+      )
+    ) {
+      throw new ConflictException(
+        `Order cannot be routed while status is ${order.status}.`,
+      );
+    }
+
+    if (!order.addressSnapshot) {
+      throw new ConflictException(
+        "Order address snapshot is missing.",
+      );
+    }
+
+    if (
+      order.currentVendorId === vendorId
+    ) {
+      throw new ConflictException(
+        "Order is already assigned to this vendor.",
+      );
+    }
+
+    const mapping =
+      await tx.vendorServiceArea
+        .findFirst({
+          where: {
+            vendorId,
+
+            isActive: true,
+
+            vendor: {
+              status:
+                VendorStatus.ACTIVE,
+            },
+
+            serviceablePincode: {
+              isActive: true,
+
+              pincode:
+                order.addressSnapshot
+                  .pincode,
+            },
+          },
+
+          select: {
+            vendorId: true,
+            priority: true,
+          },
+        });
+
+    if (!mapping) {
+      throw new BadRequestException(
+        "Selected vendor is not eligible for this order pincode.",
+      );
+    }
+
+    if (
+      order.currentVendorId !== null
+    ) {
+      const closed =
+        await tx
+          .orderVendorAssignment
+          .updateMany({
+            where: {
+              orderId:
+                order.id,
+
+              unassignedAt:
+                null,
+            },
+
+            data: {
+              unassignedAt:
+                new Date(),
+
+              unassignmentReason:
+                OrderVendorUnassignmentReason
+                  .REROUTED,
+            },
+          });
+
+      if (closed.count !== 1) {
+        throw new ConflictException(
+          "Order routing state is inconsistent.",
+        );
+      }
+    } else {
+      const activeHistoryCount =
+        await tx
+          .orderVendorAssignment
+          .count({
+            where: {
+              orderId:
+                order.id,
+
+              unassignedAt:
+                null,
+            },
+          });
+
+      if (
+        activeHistoryCount !== 0
+      ) {
+        throw new ConflictException(
+          "Order routing state is inconsistent.",
+        );
+      }
+    }
+
+    await tx.sellOrder.update({
+      where: {
+        id: order.id,
+      },
+
+      data: {
+        currentVendorId:
+          vendorId,
+      },
+
+      select: {
+        id: true,
+      },
+    });
+
+    const assignment =
+      await tx
+        .orderVendorAssignment
+        .create({
+          data: {
+            orderId:
+              order.id,
+
+            vendorId,
+
+            source,
+            reason,
+
+            prioritySnapshot:
+              mapping.priority,
+          },
+
+          select: {
+            id: true,
+            assignedAt: true,
+
+            vendor: {
+              select: {
+                id: true,
+                vendorCode: true,
+                businessName: true,
+              },
+            },
+          },
+        });
+
+    return {
+      orderNumber:
+        order.orderNumber,
+
+      assignment,
+    };
+  }
+
+  async assignOrder(
+    orderNumberInput: unknown,
+    input: OrderRoutingActionInput,
+  ) {
+    const orderNumber =
+      String(orderNumberInput ?? "")
+        .trim()
+        .slice(0, 100);
+
+    if (!orderNumber) {
+      throw new BadRequestException(
+        "Order number is required.",
+      );
+    }
+
+    const vendorId =
+      this.parsePositiveInt(
+        input.vendorId,
+        "vendor id",
+      );
+
+    const order =
+      await this.prisma.sellOrder.findUnique({
+        where: {
+          orderNumber,
+        },
+
+        select: {
+          id: true,
+          currentVendorId: true,
+        },
+      });
+
+    if (!order) {
+      throw new NotFoundException(
+        "Order not found.",
+      );
+    }
+
+    if (
+      order.currentVendorId !== null
+    ) {
+      throw new ConflictException(
+        "Order is already assigned. Use reroute instead.",
+      );
+    }
+
+    return this.prisma.$transaction(
+      (tx) =>
+        this.assignInsideTransaction(
+          tx,
+          order.id,
+          vendorId,
+          OrderVendorAssignmentSource.MANUAL,
+          OrderVendorAssignmentReason.MANUAL_ADMIN,
+        ),
+    );
+  }
+
+  async rerouteOrder(
+    orderNumberInput: unknown,
+    input: OrderRoutingActionInput,
+  ) {
+    const orderNumber =
+      String(orderNumberInput ?? "")
+        .trim()
+        .slice(0, 100);
+
+    if (!orderNumber) {
+      throw new BadRequestException(
+        "Order number is required.",
+      );
+    }
+
+    const vendorId =
+      this.parsePositiveInt(
+        input.vendorId,
+        "vendor id",
+      );
+
+    const order =
+      await this.prisma.sellOrder.findUnique({
+        where: {
+          orderNumber,
+        },
+
+        select: {
+          id: true,
+          currentVendorId: true,
+        },
+      });
+
+    if (!order) {
+      throw new NotFoundException(
+        "Order not found.",
+      );
+    }
+
+    if (
+      order.currentVendorId === null
+    ) {
+      throw new ConflictException(
+        "Order is unassigned. Use assign instead.",
+      );
+    }
+
+    return this.prisma.$transaction(
+      (tx) =>
+        this.assignInsideTransaction(
+          tx,
+          order.id,
+          vendorId,
+          OrderVendorAssignmentSource.REROUTE,
+          OrderVendorAssignmentReason.REROUTE,
+        ),
+    );
+  }
+}
+
+===== FILE: .\src\vendor-auth\vendor-auth.controller.ts =====
+
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Post,
+  Req,
+  Res,
+} from '@nestjs/common';
+
+import type {
+  Request,
+  Response,
+} from 'express';
+
+import { VendorAuthService } from './vendor-auth.service.js';
+
+@Controller('vendor-auth')
+export class VendorAuthController {
+  constructor(
+    private readonly authService: VendorAuthService,
+  ) {}
+
+  // ============================================================
+  // SESSION COOKIE
+  // ============================================================
+
+  private getSessionToken(
+    req: Request,
+  ): string | undefined {
+    const cookieName =
+      this.authService.getCookieName();
+
+    /*
+     * Primary:
+     * cookie-parser.
+     */
+    const parsedToken =
+      req.cookies?.[
+        cookieName
+      ];
+
+    if (
+      typeof parsedToken ===
+        'string' &&
+      parsedToken
+    ) {
+      return parsedToken;
+    }
+
+    /*
+     * Safe fallback:
+     * parse raw Cookie header.
+     *
+     * This also makes authentication
+     * resilient if cookie-parser is
+     * unavailable for any reason.
+     */
+    const cookieHeader =
+      req.headers.cookie;
+
+    if (!cookieHeader) {
+      return undefined;
+    }
+
+    const cookies =
+      cookieHeader.split(';');
+
+    for (
+      const cookie of cookies
+    ) {
+      const separatorIndex =
+        cookie.indexOf('=');
+
+      if (
+        separatorIndex === -1
+      ) {
+        continue;
+      }
+
+      const name =
+        cookie
+          .slice(
+            0,
+            separatorIndex,
+          )
+          .trim();
+
+      if (
+        name !== cookieName
+      ) {
+        continue;
+      }
+
+      const value =
+        cookie
+          .slice(
+            separatorIndex + 1,
+          )
+          .trim();
+
+      if (!value) {
+        return undefined;
+      }
+
+      try {
+        return decodeURIComponent(
+          value,
+        );
+      } catch {
+        return value;
+      }
+    }
+
+    return undefined;
+  }
+
+  private isLocalRequest(
+    req: Request,
+  ): boolean {
+    const hostname =
+      req.hostname
+        ?.toLowerCase();
+
+    return (
+      hostname ===
+        'localhost' ||
+      hostname ===
+        '127.0.0.1' ||
+      hostname ===
+        '::1'
+    );
+  }
+
+  private setSessionCookie(
+    req: Request,
+    res: Response,
+    token: string,
+  ): void {
+    /*
+     * IMPORTANT:
+     *
+     * Local development runs on HTTP.
+     * A Secure cookie must therefore
+     * not be forced on localhost.
+     */
+    const secure =
+      process.env.NODE_ENV ===
+        'production' &&
+      !this.isLocalRequest(req);
+
+    res.cookie(
+      this.authService.getCookieName(),
+      token,
+      {
+        httpOnly: true,
+        secure,
+        sameSite: 'lax',
+        path: '/',
+        maxAge:
+          this.authService.getCookieMaxAge(),
+      },
+    );
+  }
+
+  private clearSessionCookie(
+    req: Request,
+    res: Response,
+  ): void {
+    const secure =
+      process.env.NODE_ENV ===
+        'production' &&
+      !this.isLocalRequest(req);
+
+    res.clearCookie(
+      this.authService.getCookieName(),
+      {
+        httpOnly: true,
+        secure,
+        sameSite: 'lax',
+        path: '/',
+      },
+    );
+  }
+
+  // ============================================================
+  // LOGIN
+  // ============================================================
+
+  @Post('login')
+  async login(
+    @Req()
+    req: Request,
+
+    @Body()
+    body: {
+      identifier?: string;
+      email?: string;
+      password?: string;
+    },
+
+    @Res({
+      passthrough: true,
+    })
+    res: Response,
+  ) {
+    const identifier =
+      body.identifier?.trim() ||
+      body.email?.trim();
+
+    if (!identifier) {
+      throw new BadRequestException(
+        'Please enter your registered email address or Vendor ID.',
+      );
+    }
+
+    if (!body.password) {
+      throw new BadRequestException(
+        'Please enter your password.',
+      );
+    }
+
+    const result =
+      await this.authService.login(
+        identifier,
+        body.password,
+      );
+
+    /*
+     * Store ONLY raw session token
+     * inside HttpOnly cookie.
+     *
+     * DB already contains SHA-256 hash.
+     */
+    this.setSessionCookie(
+      req,
+      res,
+      result.sessionToken,
+    );
+
+    return {
+      authenticated: true,
+
+      mustChangePassword:
+        result.mustChangePassword,
+
+      user:
+        result.user,
+
+      vendor:
+        result.vendor,
+    };
+  }
+
+  // ============================================================
+  // CURRENT SESSION
+  // ============================================================
+
+  @Get('me')
+  async me(
+    @Req()
+    req: Request,
+  ) {
+    const token =
+      this.getSessionToken(
+        req,
+      );
+
+    const session =
+      await this.authService.getSession(
+        token,
+      );
+
+    return {
+      authenticated: true,
+
+      mustChangePassword:
+        session.mustChangePassword,
+
+      user:
+        session.user,
+
+      vendor:
+        session.vendor,
+    };
+  }
+
+  // ============================================================
+  // LOGOUT
+  // ============================================================
+
+  @Post('logout')
+  async logout(
+    @Req()
+    req: Request,
+
+    @Res({
+      passthrough: true,
+    })
+    res: Response,
+  ) {
+    const token =
+      this.getSessionToken(
+        req,
+      );
+
+    await this.authService.logout(
+      token,
+    );
+
+    this.clearSessionCookie(
+      req,
+      res,
+    );
+
+    return {
+      success: true,
+      message:
+        'Logged out successfully.',
+    };
+  }
+
+  // ============================================================
+  // CHANGE PASSWORD
+  // ============================================================
+
+  @Post('change-password')
+  async changePassword(
+    @Req()
+    req: Request,
+
+    @Body()
+    body: {
+      currentPassword?: string;
+      newPassword?: string;
+      confirmPassword?: string;
+    },
+
+    @Res({
+      passthrough: true,
+    })
+    res: Response,
+  ) {
+    if (
+      !body.currentPassword
+    ) {
+      throw new BadRequestException(
+        'Please enter your current password.',
+      );
+    }
+
+    if (
+      !body.newPassword
+    ) {
+      throw new BadRequestException(
+        'Please enter a new password.',
+      );
+    }
+
+    if (
+      !body.confirmPassword
+    ) {
+      throw new BadRequestException(
+        'Please confirm your new password.',
+      );
+    }
+
+    const result =
+      await this.authService.changePassword(
+        this.getSessionToken(
+          req,
+        ),
+        body.currentPassword,
+        body.newPassword,
+        body.confirmPassword,
+      );
+
+    /*
+     * changePassword revokes previous
+     * sessions and creates a fresh one.
+     */
+    this.setSessionCookie(
+      req,
+      res,
+      result.sessionToken,
+    );
+
+    return {
+      success: true,
+      message:
+        result.message,
+    };
+  }
+
+  // ============================================================
+  // FORGOT PASSWORD
+  // ============================================================
+
+  @Post('forgot-password')
+  async forgotPassword(
+    @Body()
+    body: {
+      email?: string;
+      mobile?: string;
+    },
+  ) {
+    const email =
+      body.email?.trim();
+
+    const mobile =
+      body.mobile?.trim();
+
+    if (!email) {
+      throw new BadRequestException(
+        'Please enter your registered email address.',
+      );
+    }
+
+    if (!mobile) {
+      throw new BadRequestException(
+        'Please enter your registered mobile number.',
+      );
+    }
+
+    return this.authService.forgotPassword(
+      email,
+      mobile,
+    );
+  }
+
+  // ============================================================
+  // VERIFY RESET OTP
+  // ============================================================
+
+  @Post('verify-reset-otp')
+  async verifyResetOtp(
+    @Body()
+    body: {
+      challengeId?: string;
+      email?: string;
+      otp?: string;
+    },
+  ) {
+    const challengeId =
+      body.challengeId?.trim();
+
+    const email =
+      body.email?.trim();
+
+    const otp =
+      body.otp?.trim();
+
+    if (!challengeId) {
+      throw new BadRequestException(
+        'Password reset request is invalid. Please request a new OTP.',
+      );
+    }
+
+    if (!email) {
+      throw new BadRequestException(
+        'Email address is required.',
+      );
+    }
+
+    if (!otp) {
+      throw new BadRequestException(
+        'Please enter the OTP sent to your email.',
+      );
+    }
+
+    if (
+      !/^\d{6}$/.test(
+        otp,
+      )
+    ) {
+      throw new BadRequestException(
+        'Please enter a valid 6-digit OTP.',
+      );
+    }
+
+    return this.authService.verifyResetOtp(
+      challengeId,
+      email,
+      otp,
+    );
+  }
+
+  // ============================================================
+  // RESET PASSWORD
+  // ============================================================
+
+  @Post('reset-password')
+  async resetPassword(
+    @Body()
+    body: {
+      challengeId?: string;
+      resetToken?: string;
+      newPassword?: string;
+      confirmPassword?: string;
+    },
+  ) {
+    const challengeId =
+      body.challengeId?.trim();
+
+    const resetToken =
+      body.resetToken?.trim();
+
+    if (
+      !challengeId ||
+      !resetToken
+    ) {
+      throw new BadRequestException(
+        'Password reset session has expired. Please request a new OTP.',
+      );
+    }
+
+    if (
+      !body.newPassword
+    ) {
+      throw new BadRequestException(
+        'Please enter a new password.',
+      );
+    }
+
+    if (
+      !body.confirmPassword
+    ) {
+      throw new BadRequestException(
+        'Please confirm your new password.',
+      );
+    }
+
+    return this.authService.resetPassword(
+      challengeId,
+      resetToken,
+      body.newPassword,
+      body.confirmPassword,
+    );
+  }
+}
+
+===== FILE: .\src\vendor-auth\vendor-auth.service.ts =====
+
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  randomInt,
+  randomUUID,
+  timingSafeEqual,
+} from 'crypto';
+
+import * as argon2 from 'argon2';
+
+import { PrismaService } from '../prisma/prisma/prisma.service.js';
+import { VendorEmailService } from '../vendor-security/vendor-email.service.js';
+
+const PASSWORD_REGEX =
+  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{10,72}$/;
+
+const RESET_OTP_ATTEMPTS = 5;
+
+@Injectable()
+export class VendorAuthService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailService: VendorEmailService,
+  ) {}
+
+  // ============================================================
+  // NORMALIZATION
+  // ============================================================
+
+  private normalizeEmail(
+    value: string,
+  ): string {
+    return value
+      .trim()
+      .toLowerCase();
+  }
+
+  private normalizeMobile(
+    value: string,
+  ): string {
+    return value
+      .replace(/\D/g, '')
+      .slice(-10);
+  }
+
+  // ============================================================
+  // HASHING
+  // ============================================================
+
+  private hashToken(
+    token: string,
+  ): string {
+    return createHash('sha256')
+      .update(token)
+      .digest('hex');
+  }
+
+  private hashOtp(
+    challengeId: string,
+    email: string,
+    otp: string,
+  ): string {
+    const secret =
+      process.env
+        .VENDOR_OTP_HMAC_SECRET;
+
+    if (!secret) {
+      throw new Error(
+        'VENDOR_OTP_HMAC_SECRET is not configured',
+      );
+    }
+
+    return createHmac(
+      'sha256',
+      secret,
+    )
+      .update(
+        `PASSWORD_RESET:${challengeId}:${email}:${otp}`,
+      )
+      .digest('hex');
+  }
+
+  private safeHashEquals(
+    first: string,
+    second: string,
+  ): boolean {
+    const firstBuffer =
+      Buffer.from(
+        first,
+        'utf8',
+      );
+
+    const secondBuffer =
+      Buffer.from(
+        second,
+        'utf8',
+      );
+
+    if (
+      firstBuffer.length !==
+      secondBuffer.length
+    ) {
+      return false;
+    }
+
+    return timingSafeEqual(
+      firstBuffer,
+      secondBuffer,
+    );
+  }
+
+  // ============================================================
+  // PASSWORD HELPERS
+  // ============================================================
+
+  private validatePassword(
+    password: string,
+  ): void {
+    if (
+      !PASSWORD_REGEX.test(
+        password,
+      )
+    ) {
+      throw new BadRequestException(
+        'Password must be 10-72 characters and include uppercase, lowercase, number and special character.',
+      );
+    }
+  }
+
+  /**
+   * Prevents malformed / legacy values from being passed
+   * directly to argon2.verify().
+   *
+   * Valid PHC Argon2 hashes start with:
+   * $argon2id$
+   * $argon2i$
+   * $argon2d$
+   */
+  private isArgon2Hash(
+    value:
+      | string
+      | null
+      | undefined,
+  ): value is string {
+    if (!value) {
+      return false;
+    }
+
+    return (
+      value.startsWith(
+        '$argon2id$',
+      ) ||
+      value.startsWith(
+        '$argon2i$',
+      ) ||
+      value.startsWith(
+        '$argon2d$',
+      )
+    );
+  }
+
+  /**
+   * Authentication code must never crash because
+   * a legacy/corrupted password hash exists.
+   */
+  private async verifyPasswordSafely(
+    passwordHash:
+      | string
+      | null
+      | undefined,
+    password: string,
+  ): Promise<boolean> {
+    if (
+      !this.isArgon2Hash(
+        passwordHash,
+      )
+    ) {
+      return false;
+    }
+
+    try {
+      return await argon2.verify(
+        passwordHash,
+        password,
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private async createPasswordHash(
+    password: string,
+  ): Promise<string> {
+    return argon2.hash(
+      password,
+      {
+        type: argon2.argon2id,
+      },
+    );
+  }
+
+  // ============================================================
+  // ENV / SESSION SETTINGS
+  // ============================================================
+
+  private sessionIdleMinutes(): number {
+    return Number(
+      process.env
+        .VENDOR_SESSION_IDLE_MINUTES ??
+        30,
+    );
+  }
+
+  private sessionAbsoluteHours(): number {
+    return Number(
+      process.env
+        .VENDOR_SESSION_ABSOLUTE_HOURS ??
+        8,
+    );
+  }
+
+  private resetOtpExpiryMinutes(): number {
+    return Number(
+      process.env
+        .VENDOR_RESET_OTP_EXPIRY_MINUTES ??
+        10,
+    );
+  }
+
+  private resetOtpResendSeconds(): number {
+    return Number(
+      process.env
+        .VENDOR_RESET_OTP_RESEND_SECONDS ??
+        60,
+    );
+  }
+
+  getCookieName(): string {
+    return (
+      process.env
+        .VENDOR_SESSION_COOKIE_NAME ??
+      'celltro_vendor_session'
+    );
+  }
+
+  getCookieMaxAge(): number {
+    return (
+      this.sessionAbsoluteHours() *
+      60 *
+      60 *
+      1000
+    );
+  }
+
+  // ============================================================
+  // LOGIN
+  //
+  // Supports:
+  // 1. Registered email
+  // 2. Vendor ID / vendorCode
+  //
+  // Username is NOT used.
+  // ============================================================
+
+  async login(
+    identifierInput: string,
+    password: string,
+  ) {
+    const identifier =
+      identifierInput.trim();
+
+    if (!identifier) {
+      throw new BadRequestException(
+        'Please enter your registered email address or Vendor ID.',
+      );
+    }
+
+    if (!password) {
+      throw new BadRequestException(
+        'Please enter your password.',
+      );
+    }
+
+    const isEmail =
+      identifier.includes('@');
+
+    const user =
+      isEmail
+        ? await this.prisma.vendorUser.findUnique(
+            {
+              where: {
+                normalizedEmail:
+                  this.normalizeEmail(
+                    identifier,
+                  ),
+              },
+
+              include: {
+                memberships: {
+                  include: {
+                    vendor: true,
+                  },
+
+                  take: 1,
+                },
+              },
+            },
+          )
+        : await this.prisma.vendorUser.findFirst(
+            {
+              where: {
+                memberships: {
+                  some: {
+                    vendor: {
+                      vendorCode: {
+                        equals:
+                          identifier,
+
+                        mode:
+                          'insensitive',
+                      },
+                    },
+                  },
+                },
+              },
+
+              include: {
+                memberships: {
+                  where: {
+                    vendor: {
+                      vendorCode: {
+                        equals:
+                          identifier,
+
+                        mode:
+                          'insensitive',
+                      },
+                    },
+                  },
+
+                  include: {
+                    vendor: true,
+                  },
+
+                  take: 1,
+                },
+              },
+            },
+          );
+
+    if (!user) {
+      throw new UnauthorizedException(
+        isEmail
+          ? 'Email address or password is incorrect.'
+          : 'Vendor ID or password is incorrect.',
+      );
+    }
+
+    if (!user.passwordHash) {
+      throw new UnauthorizedException(
+        'Your password is not configured. Please use Forgot Password to create a new password.',
+      );
+    }
+
+    /**
+     * IMPORTANT:
+     * Old/broken vendor records may contain plain text
+     * or another invalid value inside passwordHash.
+     *
+     * Never pass that value directly to argon2.verify().
+     */
+    if (
+      !this.isArgon2Hash(
+        user.passwordHash,
+      )
+    ) {
+      throw new UnauthorizedException(
+        'Your password needs to be reset. Please use Forgot Password to create a new password.',
+      );
+    }
+
+    const passwordValid =
+      await this.verifyPasswordSafely(
+        user.passwordHash,
+        password,
+      );
+
+    if (!passwordValid) {
+      throw new UnauthorizedException(
+        'Incorrect password. Please check your password and try again.',
+      );
+    }
+
+    const membership =
+      user.memberships[0];
+
+    if (!membership) {
+      throw new UnauthorizedException(
+        'No vendor account is linked with this login.',
+      );
+    }
+
+    const vendor =
+      membership.vendor;
+
+    if (
+      user.status ===
+      'SUSPENDED'
+    ) {
+      throw new UnauthorizedException(
+        'Your vendor account is suspended. Please contact Celltro support.',
+      );
+    }
+
+    if (
+      vendor.status !==
+      'ACTIVE'
+    ) {
+      throw new UnauthorizedException(
+        'Your vendor account is currently inactive.',
+      );
+    }
+
+    /**
+     * Approved first-login users can be
+     * PENDING_ACTIVATION only while they
+     * are required to change password.
+     */
+    if (
+      user.status ===
+        'PENDING_ACTIVATION' &&
+      !user.mustChangePassword
+    ) {
+      throw new UnauthorizedException(
+        'Your vendor account is not activated yet.',
+      );
+    }
+
+    if (
+      user.mustChangePassword &&
+      user.temporaryPasswordExpiresAt &&
+      user
+        .temporaryPasswordExpiresAt <=
+        new Date()
+    ) {
+      throw new UnauthorizedException(
+        'Your temporary password has expired. Please use Forgot Password to create a new password.',
+      );
+    }
+
+    const rawSessionToken =
+      randomBytes(32).toString(
+        'base64url',
+      );
+
+    const tokenHash =
+      this.hashToken(
+        rawSessionToken,
+      );
+
+    const expiresAt =
+      new Date(
+        Date.now() +
+          this.getCookieMaxAge(),
+      );
+
+    await this.prisma.vendorSession.create(
+      {
+        data: {
+          userId: user.id,
+          vendorId:
+            vendor.id,
+          tokenHash,
+          expiresAt,
+        },
+      },
+    );
+
+    return {
+      sessionToken:
+        rawSessionToken,
+
+      expiresAt,
+
+      mustChangePassword:
+        user.mustChangePassword,
+
+      user: {
+        email: user.email,
+        role:
+          membership.role,
+      },
+
+      vendor: {
+        vendorCode:
+          vendor.vendorCode,
+
+        businessName:
+          vendor.businessName,
+      },
+    };
+  }
+
+  // ============================================================
+  // GET CURRENT SESSION
+  // ============================================================
+
+  async getSession(
+    rawToken?: string,
+  ) {
+    if (!rawToken) {
+      throw new UnauthorizedException(
+        'Authentication required',
+      );
+    }
+
+    const tokenHash =
+      this.hashToken(
+        rawToken,
+      );
+
+    const session =
+      await this.prisma.vendorSession.findUnique(
+        {
+          where: {
+            tokenHash,
+          },
+
+          include: {
+            user: true,
+            vendor: true,
+          },
+        },
+      );
+
+    if (
+      !session ||
+      session.revokedAt ||
+      session.expiresAt <=
+        new Date()
+    ) {
+      throw new UnauthorizedException(
+        'Session expired',
+      );
+    }
+
+    const idleLimit =
+      this.sessionIdleMinutes() *
+      60 *
+      1000;
+
+    if (
+      Date.now() -
+        session.lastSeenAt.getTime() >
+      idleLimit
+    ) {
+      await this.prisma.vendorSession.update(
+        {
+          where: {
+            id: session.id,
+          },
+
+          data: {
+            revokedAt:
+              new Date(),
+          },
+        },
+      );
+
+      throw new UnauthorizedException(
+        'Session expired',
+      );
+    }
+
+    if (
+      session.user.status ===
+        'SUSPENDED' ||
+      session.vendor.status !==
+        'ACTIVE'
+    ) {
+      await this.prisma.vendorSession.update(
+        {
+          where: {
+            id: session.id,
+          },
+
+          data: {
+            revokedAt:
+              new Date(),
+          },
+        },
+      );
+
+      throw new UnauthorizedException(
+        'Vendor account is unavailable',
+      );
+    }
+
+    /**
+     * Avoid DB write on every request.
+     * lastSeenAt is updated at most once
+     * every five minutes.
+     */
+    const fiveMinutes =
+      5 * 60 * 1000;
+
+    if (
+      Date.now() -
+        session.lastSeenAt.getTime() >
+      fiveMinutes
+    ) {
+      await this.prisma.vendorSession.update(
+        {
+          where: {
+            id: session.id,
+          },
+
+          data: {
+            lastSeenAt:
+              new Date(),
+          },
+        },
+      );
+    }
+
+    const membership =
+      await this.prisma.vendorMembership.findUnique(
+        {
+          where: {
+            vendorId_userId: {
+              vendorId:
+                session.vendorId,
+
+              userId:
+                session.userId,
+            },
+          },
+        },
+      );
+
+    if (!membership) {
+      throw new UnauthorizedException(
+        'Vendor access is unavailable',
+      );
+    }
+
+    return {
+      sessionId:
+        session.id,
+
+      userId:
+        session.userId,
+
+      vendorId:
+        session.vendorId,
+
+      mustChangePassword:
+        session.user
+          .mustChangePassword,
+
+      user: {
+        email:
+          session.user.email,
+
+        role:
+          membership.role,
+      },
+
+      vendor: {
+        vendorCode:
+          session.vendor
+            .vendorCode,
+
+        businessName:
+          session.vendor
+            .businessName,
+      },
+    };
+  }
+
+  // ============================================================
+  // LOGOUT
+  // ============================================================
+
+  async logout(
+    rawToken?: string,
+  ): Promise<void> {
+    if (!rawToken) {
+      return;
+    }
+
+    const tokenHash =
+      this.hashToken(
+        rawToken,
+      );
+
+    await this.prisma.vendorSession.updateMany(
+      {
+        where: {
+          tokenHash,
+          revokedAt: null,
+        },
+
+        data: {
+          revokedAt:
+            new Date(),
+        },
+      },
+    );
+  }
+
+  // ============================================================
+  // CHANGE PASSWORD
+  // ============================================================
+
+  async changePassword(
+    rawToken:
+      | string
+      | undefined,
+
+    currentPassword: string,
+
+    newPassword: string,
+
+    confirmPassword: string,
+  ) {
+    if (
+      newPassword !==
+      confirmPassword
+    ) {
+      throw new BadRequestException(
+        'New password and confirm password do not match.',
+      );
+    }
+
+    this.validatePassword(
+      newPassword,
+    );
+
+    const session =
+      await this.getSession(
+        rawToken,
+      );
+
+    const user =
+      await this.prisma.vendorUser.findUnique(
+        {
+          where: {
+            id:
+              session.userId,
+          },
+        },
+      );
+
+    if (
+      !user ||
+      !user.passwordHash
+    ) {
+      throw new UnauthorizedException(
+        'Vendor account is unavailable.',
+      );
+    }
+
+    /**
+     * A malformed legacy hash cannot be securely
+     * verified as a current password.
+     *
+     * User must recover through OTP reset.
+     */
+    if (
+      !this.isArgon2Hash(
+        user.passwordHash,
+      )
+    ) {
+      throw new BadRequestException(
+        'Your current password needs to be reset. Please use Forgot Password.',
+      );
+    }
+
+    const currentValid =
+      await this.verifyPasswordSafely(
+        user.passwordHash,
+        currentPassword,
+      );
+
+    if (!currentValid) {
+      throw new BadRequestException(
+        'Current password is incorrect.',
+      );
+    }
+
+    const samePassword =
+      await this.verifyPasswordSafely(
+        user.passwordHash,
+        newPassword,
+      );
+
+    if (samePassword) {
+      throw new BadRequestException(
+        'New password must be different from your current password.',
+      );
+    }
+
+    const newHash =
+      await this.createPasswordHash(
+        newPassword,
+      );
+
+    const newSessionToken =
+      randomBytes(32).toString(
+        'base64url',
+      );
+
+    const newTokenHash =
+      this.hashToken(
+        newSessionToken,
+      );
+
+    const expiresAt =
+      new Date(
+        Date.now() +
+          this.getCookieMaxAge(),
+      );
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.vendorUser.update(
+          {
+            where: {
+              id:
+                user.id,
+            },
+
+            data: {
+              passwordHash:
+                newHash,
+
+              mustChangePassword:
+                false,
+
+              temporaryPasswordExpiresAt:
+                null,
+
+              status:
+                'ACTIVE',
+            },
+          },
+        );
+
+        /**
+         * Revoke every existing session
+         * before creating a fresh session.
+         */
+        await tx.vendorSession.updateMany(
+          {
+            where: {
+              userId:
+                user.id,
+
+              revokedAt:
+                null,
+            },
+
+            data: {
+              revokedAt:
+                new Date(),
+            },
+          },
+        );
+
+        await tx.vendorSession.create(
+          {
+            data: {
+              userId:
+                user.id,
+
+              vendorId:
+                session.vendorId,
+
+              tokenHash:
+                newTokenHash,
+
+              expiresAt,
+            },
+          },
+        );
+      },
+    );
+
+    return {
+      sessionToken:
+        newSessionToken,
+
+      expiresAt,
+
+      message:
+        'Password changed successfully.',
+    };
+  }
+
+  // ============================================================
+  // FORGOT PASSWORD
+  //
+  // Requirement:
+  //
+  // wrong email:
+  // "Kindly enter your registered email address."
+  //
+  // correct email + wrong mobile:
+  // "Kindly enter the correct registered mobile number."
+  //
+  // correct both:
+  // OTP goes to email.
+  // ============================================================
+
+  async forgotPassword(
+    emailInput: string,
+    mobileInput: string,
+  ) {
+    const email =
+      this.normalizeEmail(
+        emailInput,
+      );
+
+    const mobile =
+      this.normalizeMobile(
+        mobileInput,
+      );
+
+    if (!email) {
+      throw new BadRequestException(
+        'Kindly enter your registered email address.',
+      );
+    }
+
+    if (!mobile) {
+      throw new BadRequestException(
+        'Kindly enter your registered mobile number.',
+      );
+    }
+
+    if (
+      !/^\d{10}$/.test(
+        mobile,
+      )
+    ) {
+      throw new BadRequestException(
+        'Kindly enter a valid 10-digit mobile number.',
+      );
+    }
+
+    /**
+     * Email is checked separately because the
+     * product requirement wants a specific
+     * email-vs-mobile error message.
+     */
+    const user =
+      await this.prisma.vendorUser.findUnique(
+        {
+          where: {
+            normalizedEmail:
+              email,
+          },
+
+          include: {
+            memberships: {
+              include: {
+                vendor: true,
+              },
+
+              take: 1,
+            },
+          },
+        },
+      );
+
+    if (!user) {
+      throw new BadRequestException(
+        'Kindly enter your registered email address.',
+      );
+    }
+
+    const membership =
+      user.memberships[0];
+
+    if (!membership) {
+      throw new BadRequestException(
+        'No vendor account is linked with this email address.',
+      );
+    }
+
+    if (
+      user.status ===
+      'SUSPENDED'
+    ) {
+      throw new BadRequestException(
+        'Your vendor account is suspended. Please contact Celltro support.',
+      );
+    }
+
+    if (
+      membership.vendor.status !==
+      'ACTIVE'
+    ) {
+      throw new BadRequestException(
+        'Your vendor account is currently inactive.',
+      );
+    }
+
+    const registeredMobile =
+      this.normalizeMobile(
+        membership.vendor.phone,
+      );
+
+    if (
+      registeredMobile !==
+      mobile
+    ) {
+      throw new BadRequestException(
+        'Kindly enter the correct registered mobile number.',
+      );
+    }
+
+    /**
+     * OTP resend cooldown.
+     */
+    const latest =
+      await this.prisma.vendorEmailOtp.findFirst(
+        {
+          where: {
+            emailNormalized:
+              email,
+
+            purpose:
+              'PASSWORD_RESET',
+          },
+
+          orderBy: {
+            createdAt:
+              'desc',
+          },
+        },
+      );
+
+    if (latest) {
+      const resendAt =
+        latest.createdAt.getTime() +
+        this.resetOtpResendSeconds() *
+          1000;
+
+      if (
+        Date.now() <
+        resendAt
+      ) {
+        const remainingSeconds =
+          Math.ceil(
+            (
+              resendAt -
+              Date.now()
+            ) / 1000,
+          );
+
+        throw new BadRequestException(
+          `Please wait ${remainingSeconds} seconds before requesting another OTP.`,
+        );
+      }
+    }
+
+    const challengeId =
+      randomUUID();
+
+    const otp =
+      String(
+        randomInt(
+          100000,
+          1000000,
+        ),
+      );
+
+    const otpHash =
+      this.hashOtp(
+        challengeId,
+        email,
+        otp,
+      );
+
+    const expiresAt =
+      new Date(
+        Date.now() +
+          this.resetOtpExpiryMinutes() *
+            60 *
+            1000,
+      );
+
+    await this.prisma.vendorEmailOtp.create(
+      {
+        data: {
+          id:
+            challengeId,
+
+          emailNormalized:
+            email,
+
+          otpHash,
+
+          purpose:
+            'PASSWORD_RESET',
+
+          expiresAt,
+        },
+      },
+    );
+
+    try {
+      /**
+       * Existing mail service is reused here.
+       * Later you can rename this to
+       * sendPasswordResetOtp().
+       */
+      await this.emailService.sendSignupOtp(
+        user.email,
+        otp,
+      );
+    } catch (error) {
+      /**
+       * Don't leave a usable OTP challenge
+       * if email delivery failed.
+       */
+      await this.prisma.vendorEmailOtp
+        .delete({
+          where: {
+            id:
+              challengeId,
+          },
+        })
+        .catch(
+          () => undefined,
+        );
+
+      throw error;
+    }
+
+    return {
+      success: true,
+
+      message:
+        'OTP has been sent to your registered email address.',
+
+      challengeId,
+
+      expiresInSeconds:
+        this.resetOtpExpiryMinutes() *
+        60,
+
+      resendAfterSeconds:
+        this.resetOtpResendSeconds(),
+    };
+  }
+
+  // ============================================================
+  // VERIFY RESET OTP
+  // ============================================================
+
+  async verifyResetOtp(
+    challengeId: string,
+    emailInput: string,
+    otpInput: string,
+  ) {
+    const email =
+      this.normalizeEmail(
+        emailInput,
+      );
+
+    const otp =
+      otpInput
+        .replace(/\D/g, '')
+        .slice(0, 6);
+
+    if (
+      !/^\d{6}$/.test(
+        otp,
+      )
+    ) {
+      throw new BadRequestException(
+        'Please enter a valid 6-digit OTP.',
+      );
+    }
+
+    const challenge =
+      await this.prisma.vendorEmailOtp.findUnique(
+        {
+          where: {
+            id:
+              challengeId,
+          },
+        },
+      );
+
+    if (
+      !challenge ||
+      challenge.purpose !==
+        'PASSWORD_RESET' ||
+      challenge.emailNormalized !==
+        email ||
+      challenge.consumedAt
+    ) {
+      throw new BadRequestException(
+        'Password reset request is invalid. Please request a new OTP.',
+      );
+    }
+
+    if (
+      challenge.expiresAt <=
+      new Date()
+    ) {
+      throw new BadRequestException(
+        'OTP has expired. Please request a new OTP.',
+      );
+    }
+
+    if (
+      challenge.verifiedAt
+    ) {
+      throw new BadRequestException(
+        'This OTP has already been verified.',
+      );
+    }
+
+    if (
+      challenge.attempts >=
+      RESET_OTP_ATTEMPTS
+    ) {
+      throw new BadRequestException(
+        'Too many incorrect OTP attempts. Please request a new OTP.',
+      );
+    }
+
+    const expectedHash =
+      this.hashOtp(
+        challenge.id,
+        email,
+        otp,
+      );
+
+    const otpValid =
+      this.safeHashEquals(
+        expectedHash,
+        challenge.otpHash,
+      );
+
+    if (!otpValid) {
+      const updated =
+        await this.prisma.vendorEmailOtp.update(
+          {
+            where: {
+              id:
+                challenge.id,
+            },
+
+            data: {
+              attempts: {
+                increment: 1,
+              },
+            },
+          },
+        );
+
+      const attemptsLeft =
+        Math.max(
+          0,
+          RESET_OTP_ATTEMPTS -
+            updated.attempts,
+        );
+
+      if (
+        attemptsLeft === 0
+      ) {
+        throw new BadRequestException(
+          'Too many incorrect OTP attempts. Please request a new OTP.',
+        );
+      }
+
+      throw new BadRequestException(
+        `The OTP you entered is incorrect. ${attemptsLeft} attempt${attemptsLeft === 1 ? '' : 's'} remaining.`,
+      );
+    }
+
+    /**
+     * Raw reset token is returned to frontend.
+     * Only SHA-256 hash is stored.
+     */
+    const resetToken =
+      randomBytes(32).toString(
+        'base64url',
+      );
+
+    await this.prisma.vendorEmailOtp.update(
+      {
+        where: {
+          id:
+            challenge.id,
+        },
+
+        data: {
+          verifiedAt:
+            new Date(),
+
+          verificationTokenHash:
+            this.hashToken(
+              resetToken,
+            ),
+
+          /**
+           * User gets fresh 10 minutes after
+           * successful OTP verification.
+           */
+          expiresAt:
+            new Date(
+              Date.now() +
+                10 *
+                  60 *
+                  1000,
+            ),
+        },
+      },
+    );
+
+    return {
+      verified: true,
+      resetToken,
+    };
+  }
+
+  // ============================================================
+  // RESET PASSWORD
+  //
+  // IMPORTANT:
+  // OTP + resetToken already establish account ownership.
+  //
+  // A malformed legacy passwordHash must therefore NEVER
+  // prevent the account from being recovered.
+  // ============================================================
+
+  async resetPassword(
+    challengeId: string,
+    resetToken: string,
+    newPassword: string,
+    confirmPassword: string,
+  ) {
+    if (
+      newPassword !==
+      confirmPassword
+    ) {
+      throw new BadRequestException(
+        'New password and confirm password do not match.',
+      );
+    }
+
+    this.validatePassword(
+      newPassword,
+    );
+
+    const challenge =
+      await this.prisma.vendorEmailOtp.findUnique(
+        {
+          where: {
+            id:
+              challengeId,
+          },
+        },
+      );
+
+    if (
+      !challenge ||
+      challenge.purpose !==
+        'PASSWORD_RESET' ||
+      !challenge.verifiedAt ||
+      !challenge
+        .verificationTokenHash ||
+      challenge.consumedAt
+    ) {
+      throw new BadRequestException(
+        'Password reset session is invalid or expired.',
+      );
+    }
+
+    if (
+      challenge.expiresAt <=
+      new Date()
+    ) {
+      throw new BadRequestException(
+        'Password reset session has expired. Please request a new OTP.',
+      );
+    }
+
+    const suppliedResetTokenHash =
+      this.hashToken(
+        resetToken,
+      );
+
+    if (
+      !this.safeHashEquals(
+        suppliedResetTokenHash,
+        challenge
+          .verificationTokenHash,
+      )
+    ) {
+      throw new BadRequestException(
+        'Password reset session is invalid or expired.',
+      );
+    }
+
+    const user =
+      await this.prisma.vendorUser.findUnique(
+        {
+          where: {
+            normalizedEmail:
+              challenge
+                .emailNormalized,
+          },
+
+          include: {
+            memberships: {
+              include: {
+                vendor: true,
+              },
+
+              take: 1,
+            },
+          },
+        },
+      );
+
+    if (!user) {
+      throw new BadRequestException(
+        'Password reset session is invalid or expired.',
+      );
+    }
+
+    if (
+      user.status ===
+      'SUSPENDED'
+    ) {
+      throw new BadRequestException(
+        'Your vendor account is suspended. Please contact Celltro support.',
+      );
+    }
+
+    const membership =
+      user.memberships[0];
+
+    if (!membership) {
+      throw new BadRequestException(
+        'Vendor account is unavailable.',
+      );
+    }
+
+    if (
+      membership.vendor.status !==
+      'ACTIVE'
+    ) {
+      throw new BadRequestException(
+        'Your vendor account is currently inactive.',
+      );
+    }
+
+    /**
+     * Compare with old password ONLY if the old
+     * value is actually a valid Argon2 hash.
+     *
+     * This is the exact fix for:
+     *
+     * TypeError:
+     * pchstr must contain a $ as first char
+     *
+     * Legacy malformed values are deliberately
+     * skipped so OTP recovery can repair them.
+     */
+    if (
+      this.isArgon2Hash(
+        user.passwordHash,
+      )
+    ) {
+      const samePassword =
+        await this.verifyPasswordSafely(
+          user.passwordHash,
+          newPassword,
+        );
+
+      if (samePassword) {
+        throw new BadRequestException(
+          'New password must be different from your current password.',
+        );
+      }
+    }
+
+    /**
+     * From this point onward the account gets a
+     * proper Argon2id password hash.
+     */
+    const passwordHash =
+      await this.createPasswordHash(
+        newPassword,
+      );
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        /**
+         * Atomically consume reset challenge.
+         * Prevents reset token reuse / race.
+         */
+        const consumed =
+          await tx.vendorEmailOtp.updateMany(
+            {
+              where: {
+                id:
+                  challenge.id,
+
+                consumedAt:
+                  null,
+
+                verifiedAt: {
+                  not: null,
+                },
+              },
+
+              data: {
+                consumedAt:
+                  new Date(),
+              },
+            },
+          );
+
+        if (
+          consumed.count !== 1
+        ) {
+          throw new BadRequestException(
+            'Password reset session is invalid or has already been used.',
+          );
+        }
+
+        /**
+         * Never convert a suspended user to ACTIVE.
+         * Suspended users were rejected above.
+         *
+         * PENDING_ACTIVATION + approved vendor can
+         * complete activation through verified reset.
+         */
+        await tx.vendorUser.update(
+          {
+            where: {
+              id:
+                user.id,
+            },
+
+            data: {
+              passwordHash,
+
+              mustChangePassword:
+                false,
+
+              temporaryPasswordExpiresAt:
+                null,
+
+              status:
+                'ACTIVE',
+            },
+          },
+        );
+
+        /**
+         * Password reset invalidates every
+         * currently active browser session.
+         */
+        await tx.vendorSession.updateMany(
+          {
+            where: {
+              userId:
+                user.id,
+
+              revokedAt:
+                null,
+            },
+
+            data: {
+              revokedAt:
+                new Date(),
+            },
+          },
+        );
+      },
+    );
+
+    return {
+      success: true,
+
+      message:
+        'Password reset successfully. Please sign in with your new password.',
+    };
+  }
+}
+
+===== FILE: .\src\vendor-auth\vendor-auth.module.ts =====
+
+import { Module } from '@nestjs/common';
+
+import { PrismaModule } from '../prisma/prisma.module.js';
+import { VendorEmailService } from '../vendor-security/vendor-email.service.js';
+
+import { VendorAuthController } from './vendor-auth.controller.js';
+import { VendorAuthService } from './vendor-auth.service.js';
+
+@Module({
+  imports: [PrismaModule],
+  controllers: [VendorAuthController],
+  providers: [
+    VendorAuthService,
+    VendorEmailService,
+  ],
+  exports: [VendorAuthService],
+})
+export class VendorAuthModule {}
+
+===== FILE: .\src\app.module.ts =====
+
+import { Module } from '@nestjs/common';
+
+import { AppController } from './app.controller.js';
+import { AppService } from './app.service.js';
+
+import { PrismaModule } from './prisma/prisma.module.js';
+import { CategoriesModule } from './categories/categories.module.js';
+import { BrandsModule } from './brands/brands.module.js';
+import { ProductsModule } from './products/products.module.js';
+import { ProductSeriesModule } from './product-series/product-series.module.js';
+import { VariantsModule } from './variants/variants.module.js';
+import { VariantAttributesModule } from './variant-attributes/variant-attributes.module.js';
+import { CatalogueImportModule } from './catalogue-import/catalogue-import.module.js';
+import { QuestionnaireModule } from './questionnaire/questionnaire.module.js';
+import { DashboardModule } from './dashboard/dashboard.module.js';
+import { UploadsModule } from './uploads/uploads.module.js';
+import { SiteSettingsModule } from './site-settings/site-settings.module.js';
+import { TermsSectionsModule } from './terms-sections/terms-sections.module.js';
+import { PartnerLeadsModule } from './partner-leads/partner-leads.module.js';
+import { ContactLeadsModule } from './contact-leads/contact-leads.module.js';
+import { OrdersModule } from "./orders/orders.module.js";
+import { ServiceabilityModule } from "./serviceability/serviceability.module.js";
+import {
+  SuperAdminModule,
+} from './super-admin/super-admin.module.js';
+import { FlowConfigModule } from "./flow-config/flow-config.module.js";
+import { VendorApplicationsModule } from './vendor-applications/vendor-applications.module.js';
+import { VendorAuthModule } from './vendor-auth/vendor-auth.module.js';
+
+@Module({
+  imports: [
+    PrismaModule,
+    CategoriesModule,
+    BrandsModule,
+    ProductsModule,
+    ProductSeriesModule,
+    VariantsModule,
+    VariantAttributesModule,
+    CatalogueImportModule,
+    QuestionnaireModule,
+    DashboardModule,
+    UploadsModule,
+    SiteSettingsModule,
+    TermsSectionsModule,
+    PartnerLeadsModule,
+    ContactLeadsModule,
+    OrdersModule,
+    ServiceabilityModule,
+    SuperAdminModule,
+    FlowConfigModule,
+    VendorApplicationsModule,
+    VendorAuthModule,
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}

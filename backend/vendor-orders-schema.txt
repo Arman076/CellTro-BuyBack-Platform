@@ -1,0 +1,139 @@
+model SellOrder {
+  id                    String                   @id @default(cuid())
+  orderNumber           String                   @unique
+  customerId            Int
+  customer              Customer                 @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  productId             Int
+  variantId             Int
+  productName           String
+  productImage          String?
+  variantLabel          String
+  basePrice             Decimal                  @db.Decimal(12, 2)
+  totalDeduction        Decimal                  @db.Decimal(12, 2)
+  finalPrice            Decimal                  @db.Decimal(12, 2)
+  questionnaireSnapshot Json?
+  status                SellOrderStatus          @default(PICKUP_REQUESTED)
+  pickupDate            DateTime                 @db.Date
+  pickupSlotId          Int
+  pickupSlot            PickupSlotTemplate       @relation(fields: [pickupSlotId], references: [id], onDelete: Restrict)
+  payoutMethod          PayoutMethod
+  payoutUpiMobile       String?
+
+  currentVendorId Int?
+  currentVendor   Vendor? @relation(fields: [currentVendorId], references: [id], onDelete: Restrict)
+
+  vendorAssignments OrderVendorAssignment[]
+
+  addressSnapshot OrderAddressSnapshot?
+  statusHistory   OrderStatusHistory[]
+  reschedules     OrderRescheduleHistory[]
+
+  enquiry      EnquirySession?
+  cancellation OrderCancellation?
+  feedback     OrderFeedback?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([orderNumber])
+  @@index([status])
+  @@index([pickupDate])
+  @@index([pickupSlotId])
+  @@index([createdAt])
+
+  @@index([currentVendorId, status, createdAt])
+}
+
+
+enum OrderVendorAssignmentSource {
+  AUTO
+  MANUAL
+  REROUTE
+}
+
+enum OrderVendorAssignmentReason {
+  PINCODE_PRIORITY
+  MANUAL_ADMIN
+  REROUTE
+}
+
+enum OrderVendorUnassignmentReason {
+  MANUAL
+  VENDOR_INACTIVE
+  VENDOR_SUSPENDED
+  SERVICE_AREA_REMOVED
+  REROUTED
+}
+
+model OrderVendorAssignment {
+  id Int @id @default(autoincrement())
+
+  orderId String
+  order   SellOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  vendorId Int
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+
+  source OrderVendorAssignmentSource
+  reason OrderVendorAssignmentReason
+
+  prioritySnapshot Int?
+
+  assignedAt DateTime @default(now())
+
+  unassignedAt       DateTime?
+  unassignmentReason OrderVendorUnassignmentReason?
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId, assignedAt])
+  @@index([vendorId, unassignedAt, assignedAt])
+}
+
+model OrderAddressSnapshot {
+  id              Int                 @id @default(autoincrement())
+  orderId         String              @unique
+  order           SellOrder           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sourceAddressId Int?
+  sourceAddress   CustomerAddress?    @relation(fields: [sourceAddressId], references: [id], onDelete: SetNull)
+  fullName        String
+  phone           String
+  house           String
+  street          String
+  locality        String
+  landmark        String?
+  pincode         String
+  city            String
+  state           String
+  type            CustomerAddressType
+  createdAt       DateTime            @default(now())
+
+  @@index([sourceAddressId])
+  @@index([pincode])
+}
+
+model OrderStatusHistory {
+  id        Int             @id @default(autoincrement())
+  orderId   String
+  order     SellOrder       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    SellOrderStatus
+  note      String?
+  createdAt DateTime        @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([status])
+}
+
+model OrderRescheduleHistory {
+  id            Int       @id @default(autoincrement())
+  orderId       String
+  order         SellOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  oldPickupDate DateTime  @db.Date
+  newPickupDate DateTime  @db.Date
+  oldSlotLabel  String
+  newSlotLabel  String
+  createdAt     DateTime  @default(now())
+
+  @@index([orderId, createdAt])
+}

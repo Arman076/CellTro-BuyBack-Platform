@@ -1,175 +1,723 @@
 "use client";
 
+import Link from "next/link";
+
 import {
   ArrowRight,
+  CalendarDays,
   ClipboardList,
-  PackageCheck,
-  Users,
-  WalletCards,
   Clock3,
-  ShieldCheck,
+  MapPin,
+  PackageCheck,
+  RefreshCw,
+  Truck,
+  UserPlus,
 } from "lucide-react";
 
-import Link from "next/link";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
+import {
+  dateFilterLabel,
+  formatDate,
+  formatMoney,
+  formatStatus,
+  getVendorDashboard,
+  type DateFilter,
+  type VendorDashboardResponse,
+} from "../../lib/vendor-orders";
 
 import styles from "./DashboardClient.module.css";
 
-const quickActions = [
+const DATE_FILTERS: Array<{
+  value: DateFilter;
+  label: string;
+}> = [
   {
-    title: "Orders",
-    description:
-      "View and manage assigned orders.",
-    href: "/vendor/orders",
-    icon: ClipboardList,
+    value: "ALL",
+    label: "All Time",
   },
   {
-    title: "Pickups",
-    description:
-      "Track scheduled and active pickups.",
-    href: "/vendor/pickups",
-    icon: PackageCheck,
+    value: "TODAY",
+    label: "Today",
   },
   {
-    title: "Agents",
-    description:
-      "Manage your pickup agents.",
-    href: "/vendor/agents",
-    icon: Users,
+    value: "YESTERDAY",
+    label: "Yesterday",
   },
   {
-    title: "Wallet",
-    description:
-      "View wallet and transaction activity.",
-    href: "/vendor/wallet",
-    icon: WalletCards,
+    value: "LAST_7_DAYS",
+    label: "Last 7 Days",
+  },
+  {
+    value: "LAST_30_DAYS",
+    label: "Last 30 Days",
   },
 ];
 
 export default function DashboardClient() {
+  const [dateFilter, setDateFilter] =
+    useState<DateFilter>("ALL");
+
+  const [data, setData] =
+    useState<VendorDashboardResponse | null>(
+      null,
+    );
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
+
+  const loadDashboard =
+    useCallback(async () => {
+      setLoading(true);
+      setError("");
+
+      try {
+        const response =
+          await getVendorDashboard(
+            dateFilter,
+          );
+
+        setData(response);
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load dashboard.",
+        );
+      } finally {
+        setLoading(false);
+      }
+    }, [dateFilter]);
+
+  useEffect(() => {
+    void loadDashboard();
+  }, [loadDashboard]);
+
+  const counts =
+    data?.statusCounts ?? {};
+
+  const newOrders =
+    Number(
+      counts.PICKUP_REQUESTED ?? 0,
+    );
+
+  /*
+   * We intentionally derive operational
+   * groups from real backend statuses.
+   *
+   * Unknown future statuses remain visible
+   * in totalAssigned instead of being lost.
+   */
+  const completed =
+    useMemo(() => {
+      return Object.entries(counts)
+        .filter(([status]) => {
+          const value =
+            status.toUpperCase();
+
+          return (
+            value.includes(
+              "COMPLETED",
+            ) ||
+            value.includes(
+              "DELIVERED",
+            ) ||
+            value.includes(
+              "SUCCESS",
+            )
+          );
+        })
+        .reduce(
+          (sum, [, count]) =>
+            sum + Number(count),
+          0,
+        );
+    }, [counts]);
+
+  const inProgress =
+    useMemo(() => {
+      return Object.entries(counts)
+        .filter(([status]) => {
+          const value =
+            status.toUpperCase();
+
+          return (
+            value !==
+              "PICKUP_REQUESTED" &&
+            !value.includes(
+              "COMPLETED",
+            ) &&
+            !value.includes(
+              "DELIVERED",
+            ) &&
+            !value.includes(
+              "SUCCESS",
+            ) &&
+            !value.includes(
+              "CANCEL",
+            ) &&
+            !value.includes(
+              "FAILED",
+            ) &&
+            !value.includes(
+              "REJECT",
+            )
+          );
+        })
+        .reduce(
+          (sum, [, count]) =>
+            sum + Number(count),
+          0,
+        );
+    }, [counts]);
+
   return (
-    <div className={styles.dashboard}>
+    <div className={styles.page}>
       <section className={styles.hero}>
         <div>
-          <span className={styles.eyebrow}>
-            CELLTRO VENDOR WORKSPACE
-          </span>
+          <p className={styles.eyebrow}>
+            Vendor Workspace
+          </p>
 
-          <h1>
-            Welcome to your vendor dashboard
-          </h1>
+          <h1>Dashboard</h1>
 
-          <p>
-            Manage orders, pickups,
-            agents and account activity
-            from one workspace.
+          <p className={styles.subtitle}>
+            Manage assigned orders,
+            pickups and agents from one
+            place.
           </p>
         </div>
 
-        <div className={styles.secureBadge}>
-          <ShieldCheck size={20} />
+        <div className={styles.heroActions}>
+          <div
+            className={
+              styles.dashboardDateFilter
+            }
+          >
+            <CalendarDays size={17} />
 
-          <div>
-            <strong>
-              Secure session
-            </strong>
-
-            <span>
-              Vendor access verified
-            </span>
+            <select
+              value={dateFilter}
+              onChange={(event) =>
+                setDateFilter(
+                  event.target
+                    .value as DateFilter,
+                )
+              }
+              aria-label="Dashboard date range"
+            >
+              {DATE_FILTERS.map(
+                (filter) => (
+                  <option
+                    key={filter.value}
+                    value={filter.value}
+                  >
+                    {filter.label}
+                  </option>
+                ),
+              )}
+            </select>
           </div>
+
+          <button
+            type="button"
+            className={
+              styles.refreshButton
+            }
+            onClick={() =>
+              void loadDashboard()
+            }
+            disabled={loading}
+          >
+            <RefreshCw
+              size={17}
+              className={
+                loading
+                  ? styles.spinning
+                  : ""
+              }
+            />
+          </button>
+
+          <Link
+            href="/vendor/orders"
+            className={
+              styles.primaryButton
+            }
+          >
+            View Orders
+            <ArrowRight size={17} />
+          </Link>
         </div>
       </section>
 
-      <section className={styles.section}>
-        <div className={styles.sectionHeader}>
+      {error && (
+        <div className={styles.errorBox}>
           <div>
-            <h2>
-              Quick access
-            </h2>
+            <strong>
+              Dashboard could not be
+              loaded
+            </strong>
 
-            <p>
-              Jump directly to your
-              daily operations.
-            </p>
+            <p>{error}</p>
           </div>
-        </div>
 
-        <div className={styles.quickGrid}>
-          {quickActions.map(
-            ({
-              title,
-              description,
-              href,
-              icon: Icon,
-            }) => (
-              <Link
-                key={href}
-                href={href}
+          <button
+            type="button"
+            onClick={() =>
+              void loadDashboard()
+            }
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      <section className={styles.stats}>
+        <StatCard
+          icon={
+            <ClipboardList
+              size={21}
+            />
+          }
+          label="Assigned Orders"
+          value={
+            loading
+              ? "—"
+              : String(
+                  data?.totalAssigned ??
+                    0,
+                )
+          }
+          hint={dateFilterLabel(
+            dateFilter,
+          )}
+        />
+
+        <StatCard
+          icon={<Clock3 size={21} />}
+          label="New Orders"
+          value={
+            loading
+              ? "—"
+              : String(newOrders)
+          }
+          hint="Waiting for pickup action"
+        />
+
+        <StatCard
+          icon={<Truck size={21} />}
+          label="In Progress"
+          value={
+            loading
+              ? "—"
+              : String(inProgress)
+          }
+          hint="Active pickup workflow"
+        />
+
+        <StatCard
+          icon={
+            <PackageCheck
+              size={21}
+            />
+          }
+          label="Completed"
+          value={
+            loading
+              ? "—"
+              : String(completed)
+          }
+          hint="Successfully completed"
+        />
+      </section>
+
+      <div className={styles.contentGrid}>
+        <section
+          className={styles.panel}
+        >
+          <div
+            className={
+              styles.panelHeader
+            }
+          >
+            <div>
+              <h2>Recent Orders</h2>
+
+              <p>
+                Latest orders assigned
+                during{" "}
+                {dateFilterLabel(
+                  dateFilter,
+                ).toLowerCase()}.
+              </p>
+            </div>
+
+            <Link
+              href="/vendor/orders"
+              className={
+                styles.textLink
+              }
+            >
+              View all
+              <ArrowRight
+                size={15}
+              />
+            </Link>
+          </div>
+
+          {loading && (
+            <div
+              className={
+                styles.dashboardLoading
+              }
+            >
+              <div />
+              <div />
+              <div />
+            </div>
+          )}
+
+          {!loading &&
+            !error &&
+            (!data?.recentOrders ||
+              data.recentOrders
+                .length === 0) && (
+              <div
                 className={
-                  styles.quickCard
+                  styles.emptyOrders
                 }
               >
                 <div
                   className={
-                    styles.quickIcon
+                    styles.emptyIcon
                   }
                 >
-                  <Icon size={22} />
+                  <ClipboardList
+                    size={25}
+                  />
                 </div>
 
-                <div
+                <h3>
+                  No orders found
+                </h3>
+
+                <p>
+                  No assigned orders
+                  exist for the selected
+                  date range.
+                </p>
+
+                <Link
+                  href="/vendor/orders"
                   className={
-                    styles.quickContent
+                    styles.secondaryButton
                   }
                 >
-                  <strong>
-                    {title}
-                  </strong>
+                  Open Orders
+                </Link>
+              </div>
+            )}
 
-                  <span>
-                    {description}
-                  </span>
-                </div>
+          {!loading &&
+            data?.recentOrders &&
+            data.recentOrders.length >
+              0 && (
+              <div
+                className={
+                  styles.recentOrders
+                }
+              >
+                {data.recentOrders.map(
+                  (order) => (
+                    <Link
+                      key={order.id}
+                      href="/vendor/orders"
+                      className={
+                        styles.recentOrder
+                      }
+                    >
+                      <div
+                        className={
+                          styles.orderImage
+                        }
+                      >
+                        {order.productImage ? (
+                          <img
+                            src={
+                              order.productImage
+                            }
+                            alt=""
+                          />
+                        ) : (
+                          <ClipboardList
+                            size={21}
+                          />
+                        )}
+                      </div>
 
-                <ArrowRight
-                  size={18}
-                  className={
-                    styles.arrow
-                  }
+                      <div
+                        className={
+                          styles.orderMain
+                        }
+                      >
+                        <strong>
+                          {
+                            order.productName
+                          }
+                        </strong>
+
+                        <span>
+                          {
+                            order.orderNumber
+                          }
+                        </span>
+
+                        <small>
+                          {
+                            order.customerName
+                          }
+                        </small>
+                      </div>
+
+                      <div
+                        className={
+                          styles.orderPickup
+                        }
+                      >
+                        <span>
+                          <CalendarDays
+                            size={13}
+                          />
+                          {formatDate(
+                            order.pickupDate,
+                          )}
+                        </span>
+
+                        {order.location && (
+                          <small>
+                            <MapPin
+                              size={12}
+                            />
+                            {
+                              order
+                                .location
+                                .pincode
+                            }
+                          </small>
+                        )}
+                      </div>
+
+                      <div
+                        className={
+                          styles.orderPrice
+                        }
+                      >
+                        <strong>
+                          {formatMoney(
+                            order.finalPrice,
+                          )}
+                        </strong>
+
+                        <span>
+                          {formatStatus(
+                            order.status,
+                          )}
+                        </span>
+                      </div>
+
+                      <ArrowRight
+                        size={17}
+                      />
+                    </Link>
+                  ),
+                )}
+              </div>
+            )}
+        </section>
+
+        <section
+          className={styles.panel}
+        >
+          <div
+            className={
+              styles.panelHeader
+            }
+          >
+            <div>
+              <h2>Quick Actions</h2>
+              <p>
+                Common vendor
+                operations.
+              </p>
+            </div>
+          </div>
+
+          <div
+            className={styles.actions}
+          >
+            <Link
+              href="/vendor/orders"
+              className={
+                styles.action
+              }
+            >
+              <div
+                className={
+                  styles.actionIcon
+                }
+              >
+                <ClipboardList
+                  size={20}
                 />
-              </Link>
-            ),
-          )}
-        </div>
-      </section>
+              </div>
 
-      <section
-        className={
-          styles.activityCard
-        }
+              <div>
+                <strong>
+                  Manage Orders
+                </strong>
+
+                <span>
+                  View routed orders
+                </span>
+              </div>
+
+              <ArrowRight
+                size={17}
+              />
+            </Link>
+
+            <Link
+              href="/vendor/agents"
+              className={
+                styles.action
+              }
+            >
+              <div
+                className={
+                  styles.actionIcon
+                }
+              >
+                <UserPlus
+                  size={20}
+                />
+              </div>
+
+              <div>
+                <strong>
+                  Manage Agents
+                </strong>
+
+                <span>
+                  Create and manage
+                  pickup agents
+                </span>
+              </div>
+
+              <ArrowRight
+                size={17}
+              />
+            </Link>
+
+            <button
+              type="button"
+              className={
+                styles.action
+              }
+              onClick={() =>
+                void loadDashboard()
+              }
+              disabled={loading}
+            >
+              <div
+                className={
+                  styles.actionIcon
+                }
+              >
+                <RefreshCw
+                  size={20}
+                />
+              </div>
+
+              <div>
+                <strong>
+                  Refresh Dashboard
+                </strong>
+
+                <span>
+                  Refresh live vendor
+                  information
+                </span>
+              </div>
+
+              <RefreshCw
+                size={17}
+                className={
+                  loading
+                    ? styles.spinning
+                    : ""
+                }
+              />
+            </button>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({
+  icon,
+  label,
+  value,
+  hint,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  hint: string;
+}) {
+  return (
+    <article
+      className={styles.statCard}
+    >
+      <div
+        className={styles.statTop}
       >
         <div
-          className={
-            styles.activityIcon
-          }
+          className={styles.statIcon}
         >
-          <Clock3 size={23} />
+          {icon}
         </div>
 
-        <div>
-          <h3>
-            Operational activity
-          </h3>
+        <span
+          className={styles.live}
+        >
+          LIVE
+        </span>
+      </div>
 
-          <p>
-            Live order and pickup
-            activity will appear here
-            from the vendor dashboard
-            API. No placeholder
-            business data is shown.
-          </p>
-        </div>
-      </section>
-    </div>
+      <strong
+        className={styles.statValue}
+      >
+        {value}
+      </strong>
+
+      <span
+        className={styles.statLabel}
+      >
+        {label}
+      </span>
+
+      <small>{hint}</small>
+    </article>
   );
 }

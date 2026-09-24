@@ -72,6 +72,7 @@ type Answer = {
 };
 
 type QuoteResult = {
+  enquirySessionId: string;
   basePrice: number;
   totalDeduction: number;
   finalPrice: number;
@@ -91,6 +92,7 @@ type Props = {
 async function apiJson(url: string, init?: RequestInit) {
   const response = await fetch(url, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers || {}),
@@ -979,7 +981,44 @@ export default function ExactValueModal({
         }),
       });
 
-      setSessionId(response.sessionId);
+      /*
+       * Current backend prevents accidental duplicate ACTIVE orders for the
+       * same verified phone + product + variant.
+       */
+      if (response?.existingOrder === true) {
+        setError(
+          response?.message ||
+            "An active order already exists for this device. Please check your orders.",
+        );
+        return;
+      }
+
+      const nextSessionId = String(response?.sessionId || "").trim();
+
+      if (!nextSessionId) {
+        throw new Error("Verified quote session could not be created.");
+      }
+
+      setSessionId(nextSessionId);
+
+      /*
+       * A valid HttpOnly customer session can reuse identity verification
+       * for eligible devices. In that case backend returns the quote
+       * immediately and OTP must NOT be shown again.
+       */
+      if (response?.otpRequired === false) {
+        setQuote({
+          enquirySessionId: nextSessionId,
+          basePrice: Number(response.basePrice),
+          totalDeduction: Number(response.totalDeduction),
+          finalPrice: Number(response.finalPrice),
+        });
+
+        setDevOtp(null);
+        setStep("RESULT");
+        return;
+      }
+
       setDevOtp(response.devOtp ?? null);
       setStep("OTP");
     } catch (e) {
@@ -1004,11 +1043,19 @@ export default function ExactValueModal({
         `${API}/questionnaire/quote/verify-otp`,
         {
           method: "POST",
-          body: JSON.stringify({ sessionId, otp }),
+          body: JSON.stringify({
+            sessionId,
+            otp,
+          }),
         },
       );
 
+      /*
+       * verify-otp sets the HttpOnly `celltro_customer_session` cookie.
+       * apiJson uses credentials:"include", so the browser accepts it.
+       */
       setQuote({
+        enquirySessionId: sessionId,
         basePrice: Number(response.basePrice),
         totalDeduction: Number(response.totalDeduction),
         finalPrice: Number(response.finalPrice),
@@ -1036,6 +1083,7 @@ export default function ExactValueModal({
     sessionStorage.setItem(
       "sellQuote",
       JSON.stringify({
+        enquirySessionId: quote.enquirySessionId,
         productId,
         productName,
         productImage,

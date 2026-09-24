@@ -26,6 +26,8 @@ import {
 import { FlowConfigModule } from "./flow-config/flow-config.module.js";
 import { VendorApplicationsModule } from './vendor-applications/vendor-applications.module.js';
 import { VendorAuthModule } from './vendor-auth/vendor-auth.module.js';
+import { VendorOrdersModule } from './vendor-orders/vendor-orders.module.js';
+
 
 @Module({
   imports: [
@@ -50,6 +52,7 @@ import { VendorAuthModule } from './vendor-auth/vendor-auth.module.js';
     FlowConfigModule,
     VendorApplicationsModule,
     VendorAuthModule,
+    VendorOrdersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

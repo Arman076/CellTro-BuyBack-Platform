@@ -19,11 +19,18 @@ import {
   PrismaService,
 } from "../prisma/prisma/prisma.service.js";
 
+import {
+  RoutingService,
+} from "../routing/routing.service.js";
+
 @Injectable()
 export class OrdersService {
   constructor(
     private readonly prisma:
       PrismaService,
+
+    private readonly routingService:
+      RoutingService,
   ) {}
 
   private hashToken(
@@ -1263,6 +1270,9 @@ export class OrdersService {
         },
 
         select: {
+          id:
+            true,
+
           isActive:
             true,
         },
@@ -1512,6 +1522,17 @@ export class OrdersService {
                   true,
               },
             });
+
+          await this.routingService.autoAssignNewOrder(
+            tx,
+            {
+              orderId:
+                createdOrder.id,
+
+              serviceablePincodeId:
+                serviceability.id,
+            },
+          );
 
           const linkResult =
             await tx.enquirySession.updateMany({
