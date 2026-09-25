@@ -243,6 +243,284 @@ export class VendorEmailService {
     }
   }
 
+  async sendAgentSignupOtp(
+  email: string,
+  otp: string,
+): Promise<void> {
+  const from =
+    this.getFromAddress();
+
+  const transporter =
+    this.createTransporter();
+
+  try {
+    await transporter.sendMail({
+      from,
+      to: email,
+
+      subject:
+        'Verify your Celltro agent email',
+
+      text:
+        `Your Celltro agent verification code is ${otp}. ` +
+        'This code expires in 10 minutes. ' +
+        'Do not share this code with anyone.',
+
+      html: `
+        <div
+          style="
+            max-width:520px;
+            margin:0 auto;
+            padding:32px;
+            font-family:Arial,sans-serif;
+            color:#0f172a;
+          "
+        >
+          <div
+            style="
+              font-size:24px;
+              font-weight:800;
+              color:#0f2b5b;
+              margin-bottom:28px;
+            "
+          >
+            Celltro
+          </div>
+
+          <h2
+            style="
+              margin:0 0 12px;
+              color:#0f2b5b;
+            "
+          >
+            Verify your agent email
+          </h2>
+
+          <p
+            style="
+              color:#64748b;
+              line-height:1.6;
+            "
+          >
+            Use this verification code to
+            continue your Celltro agent
+            registration.
+          </p>
+
+          <div
+            style="
+              margin:28px 0;
+              padding:20px;
+              border-radius:12px;
+              background:#f1f5f9;
+              text-align:center;
+              font-size:32px;
+              font-weight:800;
+              letter-spacing:8px;
+              color:#1265df;
+            "
+          >
+            ${this.escapeHtml(otp)}
+          </div>
+
+          <p
+            style="
+              color:#64748b;
+              font-size:13px;
+            "
+          >
+            This code expires in
+            <strong>10 minutes</strong>.
+          </p>
+
+          <p
+            style="
+              color:#94a3b8;
+              font-size:12px;
+              line-height:1.5;
+            "
+          >
+            Never share this OTP with anyone.
+            Celltro will never ask you to share
+            your verification code.
+          </p>
+        </div>
+      `,
+    });
+  } catch (error) {
+    this.logEmailFailure(
+      'agent signup OTP email',
+      error,
+    );
+
+    throw new ServiceUnavailableException(
+      'Unable to send verification email. Please try again.',
+    );
+  }
+}
+
+async sendOrderVerificationOtp(
+  input: {
+    email: string;
+    otp: string;
+    purpose:
+      | 'INSPECTION_START'
+      | 'QUOTE_ACCEPT'
+      | 'QUOTE_REJECT';
+    orderNumber: string;
+  },
+): Promise<void> {
+  const from =
+    this.getFromAddress();
+
+  const transporter =
+    this.createTransporter();
+
+  const purposeText = {
+    INSPECTION_START:
+      'start the device inspection',
+    QUOTE_ACCEPT:
+      'accept the final Celltro quote',
+    QUOTE_REJECT:
+      'reject the final Celltro quote',
+  }[input.purpose];
+
+  const safeOtp =
+    this.escapeHtml(
+      input.otp,
+    );
+
+  const safeOrderNumber =
+    this.escapeHtml(
+      input.orderNumber,
+    );
+
+  const safePurpose =
+    this.escapeHtml(
+      purposeText,
+    );
+
+  try {
+    await transporter.sendMail({
+      from,
+      to: input.email,
+
+      subject:
+        `Celltro verification code for ${input.orderNumber}`,
+
+      text:
+        `Your Celltro verification code is ${input.otp}. ` +
+        `Use this code to ${purposeText} for order ${input.orderNumber}. ` +
+        'This code expires in 5 minutes. ' +
+        'Do not share this code unless you are completing the Celltro pickup process.',
+
+      html: `
+        <div
+          style="
+            max-width:520px;
+            margin:0 auto;
+            padding:32px;
+            font-family:Arial,sans-serif;
+            color:#0f172a;
+          "
+        >
+          <div
+            style="
+              font-size:24px;
+              font-weight:800;
+              color:#0f2b5b;
+              margin-bottom:28px;
+            "
+          >
+            Celltro
+          </div>
+
+          <h2
+            style="
+              margin:0 0 12px;
+              color:#0f2b5b;
+            "
+          >
+            Verify your pickup action
+          </h2>
+
+          <p
+            style="
+              color:#64748b;
+              line-height:1.6;
+            "
+          >
+            Use the verification code below to
+            ${safePurpose}.
+          </p>
+
+          <div
+            style="
+              margin:20px 0;
+              padding:14px;
+              border-radius:10px;
+              background:#f8fafc;
+              color:#475569;
+              font-size:14px;
+            "
+          >
+            Order:
+            <strong>
+              ${safeOrderNumber}
+            </strong>
+          </div>
+
+          <div
+            style="
+              margin:28px 0;
+              padding:20px;
+              border-radius:12px;
+              background:#f1f5f9;
+              text-align:center;
+              font-size:32px;
+              font-weight:800;
+              letter-spacing:8px;
+              color:#1265df;
+            "
+          >
+            ${safeOtp}
+          </div>
+
+          <p
+            style="
+              color:#64748b;
+              font-size:13px;
+            "
+          >
+            This code expires in
+            <strong>5 minutes</strong>.
+          </p>
+
+          <p
+            style="
+              color:#94a3b8;
+              font-size:12px;
+              line-height:1.5;
+            "
+          >
+            Never share this OTP outside the
+            Celltro pickup verification process.
+          </p>
+        </div>
+      `,
+    });
+  } catch (error) {
+    this.logEmailFailure(
+      'order verification OTP email',
+      error,
+    );
+
+    throw new ServiceUnavailableException(
+      'Unable to send verification email. Please try again.',
+    );
+  }
+}
+
   async sendVendorApproval(
     input: VendorApprovalEmailInput,
   ): Promise<void> {

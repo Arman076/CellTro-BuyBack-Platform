@@ -11,11 +11,14 @@ import {
   Eye,
   History,
   IndianRupee,
+  Mail,
   MapPin,
   PackageSearch,
+  Phone,
   RefreshCw,
   Search,
   ShieldCheck,
+  UserCheck,
   UserRound,
   UsersRound,
   X,
@@ -31,14 +34,18 @@ import {
 } from "react";
 
 import {
+  assignVendorOrderAgent,
   dateFilterLabel,
   formatDate,
   formatDateTime,
   formatMoney,
   formatStatus,
+  getActiveVendorAgents,
   getVendorOrder,
   getVendorOrders,
+  type ActiveVendorAgent,
   type DateFilter,
+  type OrderAgent,
   type StatusGroup,
   type VendorOrder,
   type VendorOrderDetails,
@@ -51,6 +58,12 @@ type DetailTab =
   | "DEVICE_REPORT"
   | "AGENT_INSPECTION"
   | "HISTORY";
+
+type AssignmentTarget = {
+  orderNumber: string;
+  productName: string;
+  currentAgent: OrderAgent | null;
+};
 
 const DATE_FILTERS: Array<{
   value: DateFilter;
@@ -77,19 +90,16 @@ const STATUS_TABS: Array<{
 function statusClass(status: string) {
   const value = String(status ?? "").toUpperCase();
 
-  if (value === "COMPLETED") {
+  if (
+    value === "COMPLETED" ||
+    value === "INSPECTION_COMPLETED" ||
+    value === "PAYMENT_COMPLETED"
+  ) {
     return styles.statusSuccess;
   }
 
   if (value === "CANCELLED") {
     return styles.statusDanger;
-  }
-
-  if (
-    value === "INSPECTION_COMPLETED" ||
-    value === "PAYMENT_COMPLETED"
-  ) {
-    return styles.statusSuccess;
   }
 
   if (
@@ -204,11 +214,99 @@ function DeviceAnswerState({
   );
 }
 
+function CustomerAddressCard({
+  order,
+}: {
+  order: VendorOrder;
+}) {
+  return (
+    <div className={styles.customerAddressCard}>
+      <div className={styles.customerIdentity}>
+        <div className={styles.customerAvatar}>
+          <UserRound size={17} />
+        </div>
+
+        <div className={styles.customerIdentityText}>
+          <strong>
+            {order.customer?.name ?? "Customer"}
+          </strong>
+
+          {order.customer?.phone ? (
+            <span>
+              <Phone size={12} />
+              {order.customer.phone}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <div className={styles.customerAddressDivider} />
+
+      <div className={styles.customerAddressLine}>
+        <MapPin size={15} />
+
+        <span>{combineAddress(order.address)}</span>
+      </div>
+    </div>
+  );
+}
+
+function AgentSummary({
+  agent,
+  onManage,
+}: {
+  agent: OrderAgent | null;
+  onManage: () => void;
+}) {
+  return (
+    <div className={styles.agentSummary}>
+      {agent ? (
+        <div className={styles.assignedAgentInfo}>
+          <div className={styles.agentAvatar}>
+            <UserCheck size={17} />
+          </div>
+
+          <div>
+            <strong>{agent.name}</strong>
+
+            {agent.mobile ? (
+              <span>{agent.mobile}</span>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <div className={styles.agentNotAssigned}>
+          <div className={styles.agentAvatarMuted}>
+            <UsersRound size={17} />
+          </div>
+
+          <div>
+            <strong>Not assigned</strong>
+            <span>Choose pickup agent</span>
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        className={
+          agent
+            ? styles.reassignButton
+            : styles.assignButton
+        }
+        onClick={onManage}
+      >
+        {agent ? "Reassign" : "Assign Agent"}
+      </button>
+    </div>
+  );
+}
+
 export default function VendorOrders() {
   const [orders, setOrders] = useState<VendorOrder[]>([]);
 
   const [page, setPage] = useState(1);
-  const [limit] = useState(20);
+  const limit = 20;
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
@@ -231,16 +329,36 @@ export default function VendorOrders() {
   const [selectedOrder, setSelectedOrder] =
     useState<VendorOrderDetails | null>(null);
 
-  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsLoading, setDetailsLoading] =
+    useState(false);
+
   const [detailsError, setDetailsError] = useState("");
 
   const [activeTab, setActiveTab] =
     useState<DetailTab>("OVERVIEW");
 
-  /*
-   * Search is intentionally debounced.
-   * Avoids API/DB request on every keystroke.
-   */
+  const [assignmentTarget, setAssignmentTarget] =
+    useState<AssignmentTarget | null>(null);
+
+  const [agents, setAgents] =
+    useState<ActiveVendorAgent[]>([]);
+
+  const [agentsLoading, setAgentsLoading] =
+    useState(false);
+
+  const [agentsError, setAgentsError] = useState("");
+
+  const [agentSearch, setAgentSearch] = useState("");
+
+  const [selectedAgentId, setSelectedAgentId] =
+    useState<number | null>(null);
+
+  const [assignmentSubmitting, setAssignmentSubmitting] =
+    useState(false);
+
+  const [assignmentError, setAssignmentError] =
+    useState("");
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setPage(1);
@@ -252,13 +370,10 @@ export default function VendorOrders() {
 
   const loadOrders = useCallback(
     async (silent = false) => {
-      if (!silent) {
-        setLoading(true);
-      } else {
+      if (silent) {
         setRefreshing(true);
-      }
-
-      if (!silent) {
+      } else {
+        setLoading(true);
         setError("");
       }
 
@@ -275,9 +390,7 @@ export default function VendorOrders() {
           Array.isArray(result.data) ? result.data : [],
         );
 
-        setTotal(
-          Number(result.pagination?.total ?? 0),
-        );
+        setTotal(Number(result.pagination?.total ?? 0));
 
         setTotalPages(
           Math.max(
@@ -305,41 +418,34 @@ export default function VendorOrders() {
         setRefreshing(false);
       }
     },
-    [
-      page,
-      limit,
-      search,
-      statusGroup,
-      dateFilter,
-    ],
+    [page, search, statusGroup, dateFilter],
   );
 
   useEffect(() => {
     void loadOrders();
   }, [loadOrders]);
 
-  /*
-   * Lightweight refresh only.
-   *
-   * - GET request only
-   * - only when page is visible
-   * - paused while order details are open
-   *
-   * Later this can be replaced by SSE/WebSocket
-   * without changing the order UI structure.
-   */
   useEffect(() => {
     const interval = window.setInterval(() => {
       if (
         document.visibilityState === "visible" &&
-        !detailsOrderNumber
+        !detailsOrderNumber &&
+        !assignmentTarget
       ) {
         void loadOrders(true);
       }
     }, 30000);
 
     return () => window.clearInterval(interval);
-  }, [loadOrders, detailsOrderNumber]);
+  }, [loadOrders, detailsOrderNumber, assignmentTarget]);
+
+  const refreshSelectedOrder = useCallback(
+    async (orderNumber: string) => {
+      const result = await getVendorOrder(orderNumber);
+      setSelectedOrder(result);
+    },
+    [],
+  );
 
   async function openDetails(orderNumber: string) {
     setDetailsOrderNumber(orderNumber);
@@ -349,8 +455,7 @@ export default function VendorOrders() {
     setActiveTab("OVERVIEW");
 
     try {
-      const result = await getVendorOrder(orderNumber);
-      setSelectedOrder(result);
+      await refreshSelectedOrder(orderNumber);
     } catch (err) {
       setDetailsError(
         err instanceof Error
@@ -369,15 +474,114 @@ export default function VendorOrders() {
     setActiveTab("OVERVIEW");
   }
 
+  const openAgentAssignment = useCallback(
+    async (target: AssignmentTarget) => {
+      setAssignmentTarget(target);
+      setSelectedAgentId(target.currentAgent?.id ?? null);
+      setAgentSearch("");
+      setAgents([]);
+      setAgentsError("");
+      setAssignmentError("");
+      setAgentsLoading(true);
+
+      try {
+        const result = await getActiveVendorAgents();
+        setAgents(result);
+      } catch (err) {
+        setAgentsError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load active agents.",
+        );
+      } finally {
+        setAgentsLoading(false);
+      }
+    },
+    [],
+  );
+
+  function closeAgentAssignment() {
+    if (assignmentSubmitting) {
+      return;
+    }
+
+    setAssignmentTarget(null);
+    setSelectedAgentId(null);
+    setAgents([]);
+    setAgentSearch("");
+    setAgentsError("");
+    setAssignmentError("");
+  }
+
+  async function submitAgentAssignment() {
+    if (
+      !assignmentTarget ||
+      !selectedAgentId ||
+      assignmentSubmitting
+    ) {
+      return;
+    }
+
+    if (
+      assignmentTarget.currentAgent?.id === selectedAgentId
+    ) {
+      closeAgentAssignment();
+      return;
+    }
+
+    setAssignmentSubmitting(true);
+    setAssignmentError("");
+
+    try {
+      await assignVendorOrderAgent(
+        assignmentTarget.orderNumber,
+        selectedAgentId,
+      );
+
+      const orderNumber = assignmentTarget.orderNumber;
+
+      setAssignmentTarget(null);
+      setSelectedAgentId(null);
+      setAgents([]);
+      setAgentSearch("");
+
+      await loadOrders(true);
+
+      if (detailsOrderNumber === orderNumber) {
+        try {
+          await refreshSelectedOrder(orderNumber);
+        } catch {
+          // List assignment succeeded.
+          // Existing detail data remains visible if detail refresh fails.
+        }
+      }
+    } catch (err) {
+      setAssignmentError(
+        err instanceof Error
+          ? err.message
+          : "Unable to assign agent.",
+      );
+    } finally {
+      setAssignmentSubmitting(false);
+    }
+  }
+
   useEffect(() => {
-    if (!detailsOrderNumber) {
+    if (!detailsOrderNumber && !assignmentTarget) {
       return;
     }
 
     function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        closeDetails();
+      if (event.key !== "Escape") {
+        return;
       }
+
+      if (assignmentTarget) {
+        closeAgentAssignment();
+        return;
+      }
+
+      closeDetails();
     }
 
     document.addEventListener("keydown", handleEscape);
@@ -385,10 +589,14 @@ export default function VendorOrders() {
     return () => {
       document.removeEventListener("keydown", handleEscape);
     };
-  }, [detailsOrderNumber]);
+  }, [
+    detailsOrderNumber,
+    assignmentTarget,
+    assignmentSubmitting,
+  ]);
 
   useEffect(() => {
-    if (!detailsOrderNumber) {
+    if (!detailsOrderNumber && !assignmentTarget) {
       return;
     }
 
@@ -398,7 +606,7 @@ export default function VendorOrders() {
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [detailsOrderNumber]);
+  }, [detailsOrderNumber, assignmentTarget]);
 
   const resultText = useMemo(() => {
     if (total === 0) {
@@ -409,7 +617,36 @@ export default function VendorOrders() {
     const last = Math.min(page * limit, total);
 
     return `${first}-${last} of ${total} orders`;
-  }, [page, limit, total]);
+  }, [page, total]);
+
+  const filteredAgents = useMemo(() => {
+    const query = agentSearch.trim().toLowerCase();
+
+    if (!query) {
+      return agents;
+    }
+
+    return agents.filter((agent) => {
+      return [
+        agent.fullName,
+        agent.mobile,
+        agent.email,
+        agent.agentCode,
+      ].some((value) =>
+        String(value ?? "")
+          .toLowerCase()
+          .includes(query),
+      );
+    });
+  }, [agents, agentSearch]);
+
+  const selectedAgent = useMemo(
+    () =>
+      agents.find(
+        (agent) => agent.id === selectedAgentId,
+      ) ?? null,
+    [agents, selectedAgentId],
+  );
 
   function changeStatusGroup(value: StatusGroup) {
     setStatusGroup(value);
@@ -426,12 +663,11 @@ export default function VendorOrders() {
       <header className={styles.pageHeader}>
         <div>
           <p className={styles.eyebrow}>Vendor Workspace</p>
-
           <h1 className={styles.title}>Orders</h1>
 
           <p className={styles.subtitle}>
-            Manage assigned pickup orders, customer device
-            reports and agent workflow from one place.
+            Manage assigned pickups, customer device reports,
+            quotes and field agents from one workspace.
           </p>
         </div>
 
@@ -445,11 +681,9 @@ export default function VendorOrders() {
             size={18}
             className={refreshing ? styles.spin : undefined}
           />
-          Refresh
+          {refreshing ? "Refreshing..." : "Refresh"}
         </button>
       </header>
-
-      {/* MAIN STATUS TABS */}
 
       <div
         className={styles.statusTabs}
@@ -473,8 +707,6 @@ export default function VendorOrders() {
           </button>
         ))}
       </div>
-
-      {/* FILTER BAR */}
 
       <div className={styles.toolbar}>
         <div className={styles.searchBox}>
@@ -541,8 +773,6 @@ export default function VendorOrders() {
         </span>
       </div>
 
-      {/* ERROR */}
-
       {error ? (
         <div className={styles.errorState}>
           <CircleAlert size={28} />
@@ -561,8 +791,6 @@ export default function VendorOrders() {
         </div>
       ) : null}
 
-      {/* LOADING */}
-
       {loading ? (
         <div className={styles.loadingState}>
           <div className={styles.loadingSpinner} />
@@ -570,14 +798,10 @@ export default function VendorOrders() {
         </div>
       ) : null}
 
-      {/* EMPTY */}
-
       {!loading && !error && orders.length === 0 ? (
         <div className={styles.emptyState}>
           <PackageSearch size={44} />
-
           <h2>No orders found</h2>
-
           <p>
             There are no orders matching the selected
             filters.
@@ -585,16 +809,14 @@ export default function VendorOrders() {
         </div>
       ) : null}
 
-      {/* DESKTOP TABLE */}
-
       {!loading && !error && orders.length > 0 ? (
         <>
           <div className={styles.tableCard}>
             <div className={styles.tableHeader}>
               <span>Order / Device</span>
-              <span>Customer & Address</span>
+              <span>Customer & Pickup Address</span>
               <span>Pickup</span>
-              <span>Final Quote</span>
+              <span>Quote</span>
               <span>Agent</span>
               <span>Status</span>
               <span>Action</span>
@@ -620,29 +842,7 @@ export default function VendorOrders() {
                     </span>
                   </div>
 
-                  <div className={styles.customerCell}>
-                    <div className={styles.customerName}>
-                      <UserRound size={17} />
-
-                      <strong>
-                        {order.customer?.name ??
-                          "Customer"}
-                      </strong>
-                    </div>
-
-                    {order.customer?.phone ? (
-                      <span className={styles.phoneText}>
-                        {order.customer.phone}
-                      </span>
-                    ) : null}
-
-                    <div className={styles.fullAddress}>
-                      <MapPin size={16} />
-                      <span>
-                        {combineAddress(order.address)}
-                      </span>
-                    </div>
-                  </div>
+                  <CustomerAddressCard order={order} />
 
                   <div className={styles.pickupCell}>
                     <div className={styles.pickupPrimary}>
@@ -669,30 +869,22 @@ export default function VendorOrders() {
                     <strong className={styles.quoteValue}>
                       {formatMoney(order.finalPrice)}
                     </strong>
+
+                    <span className={styles.quoteHint}>
+                      Original quote
+                    </span>
                   </div>
 
-                  <div className={styles.agentCell}>
-                    {order.agent ? (
-                      <>
-                        <strong>{order.agent.name}</strong>
-
-                        {order.agent.mobile ? (
-                          <span>{order.agent.mobile}</span>
-                        ) : null}
-                      </>
-                    ) : (
-                      <>
-                        <span className={styles.unassignedAgent}>
-                          <UsersRound size={17} />
-                          Not assigned
-                        </span>
-
-                        <small>
-                          Agent module will manage assignment
-                        </small>
-                      </>
-                    )}
-                  </div>
+                  <AgentSummary
+                    agent={order.agent}
+                    onManage={() =>
+                      void openAgentAssignment({
+                        orderNumber: order.orderNumber,
+                        productName: order.productName,
+                        currentAgent: order.agent,
+                      })
+                    }
+                  />
 
                   <div className={styles.statusCell}>
                     <StatusBadge status={order.status} />
@@ -715,8 +907,6 @@ export default function VendorOrders() {
             </div>
           </div>
 
-          {/* MOBILE CARDS */}
-
           <div className={styles.mobileList}>
             {orders.map((order) => (
               <article
@@ -730,7 +920,7 @@ export default function VendorOrders() {
                     </strong>
 
                     <span className={styles.mobileVariant}>
-                      {order.variantLabel}
+                      {order.variantLabel || "Variant —"}
                     </span>
                   </div>
 
@@ -741,24 +931,35 @@ export default function VendorOrders() {
                   {order.orderNumber}
                 </span>
 
-                <div className={styles.mobileSection}>
-                  <span className={styles.mobileLabel}>
-                    Customer
-                  </span>
+                <div className={styles.mobileCustomerCard}>
+                  <div className={styles.mobileCustomerTop}>
+                    <div className={styles.customerAvatar}>
+                      <UserRound size={17} />
+                    </div>
 
-                  <strong>
-                    {order.customer?.name ?? "Customer"}
-                  </strong>
+                    <div>
+                      <span className={styles.mobileLabel}>
+                        Customer
+                      </span>
 
-                  {order.customer?.phone ? (
-                    <span>{order.customer.phone}</span>
-                  ) : null}
-                </div>
+                      <strong>
+                        {order.customer?.name ?? "Customer"}
+                      </strong>
 
-                <div className={styles.mobileAddress}>
-                  <MapPin size={18} />
+                      {order.customer?.phone ? (
+                        <span className={styles.mobilePhone}>
+                          {order.customer.phone}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
 
-                  <span>{combineAddress(order.address)}</span>
+                  <div className={styles.mobileAddress}>
+                    <MapPin size={17} />
+                    <span>
+                      {combineAddress(order.address)}
+                    </span>
+                  </div>
                 </div>
 
                 <div className={styles.mobileGrid}>
@@ -779,7 +980,7 @@ export default function VendorOrders() {
 
                   <div>
                     <span className={styles.mobileLabel}>
-                      Final Quote
+                      Customer Quote
                     </span>
 
                     <strong className={styles.mobileQuote}>
@@ -788,18 +989,57 @@ export default function VendorOrders() {
                   </div>
                 </div>
 
-                <div className={styles.mobileAgent}>
-                  <UsersRound size={18} />
+                <div className={styles.mobileAgentCard}>
+                  <div className={styles.mobileAgentIdentity}>
+                    <div
+                      className={
+                        order.agent
+                          ? styles.agentAvatar
+                          : styles.agentAvatarMuted
+                      }
+                    >
+                      {order.agent ? (
+                        <UserCheck size={17} />
+                      ) : (
+                        <UsersRound size={17} />
+                      )}
+                    </div>
 
-                  <div>
-                    <span className={styles.mobileLabel}>
-                      Agent
-                    </span>
+                    <div>
+                      <span className={styles.mobileLabel}>
+                        Pickup Agent
+                      </span>
 
-                    <strong>
-                      {order.agent?.name ?? "Not assigned"}
-                    </strong>
+                      <strong>
+                        {order.agent?.name ??
+                          "Not assigned"}
+                      </strong>
+
+                      {order.agent?.mobile ? (
+                        <span>
+                          {order.agent.mobile}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
+
+                  <button
+                    type="button"
+                    className={
+                      order.agent
+                        ? styles.mobileReassignButton
+                        : styles.mobileAssignButton
+                    }
+                    onClick={() =>
+                      void openAgentAssignment({
+                        orderNumber: order.orderNumber,
+                        productName: order.productName,
+                        currentAgent: order.agent,
+                      })
+                    }
+                  >
+                    {order.agent ? "Reassign" : "Assign"}
+                  </button>
                 </div>
 
                 <button
@@ -810,13 +1050,11 @@ export default function VendorOrders() {
                   }
                 >
                   <Eye size={18} />
-                  View Details
+                  View Order Details
                 </button>
               </article>
             ))}
           </div>
-
-          {/* PAGINATION */}
 
           <div className={styles.pagination}>
             <button
@@ -852,8 +1090,6 @@ export default function VendorOrders() {
           </div>
         </>
       ) : null}
-
-      {/* ORDER DETAILS WORKSPACE */}
 
       {detailsOrderNumber ? (
         <div
@@ -907,57 +1143,27 @@ export default function VendorOrders() {
             </header>
 
             <div className={styles.detailTabs}>
-              <button
-                type="button"
-                className={
-                  activeTab === "OVERVIEW"
-                    ? styles.detailTabActive
-                    : ""
-                }
-                onClick={() => setActiveTab("OVERVIEW")}
-              >
-                Overview
-              </button>
-
-              <button
-                type="button"
-                className={
-                  activeTab === "DEVICE_REPORT"
-                    ? styles.detailTabActive
-                    : ""
-                }
-                onClick={() =>
-                  setActiveTab("DEVICE_REPORT")
-                }
-              >
-                Device Report
-              </button>
-
-              <button
-                type="button"
-                className={
-                  activeTab === "AGENT_INSPECTION"
-                    ? styles.detailTabActive
-                    : ""
-                }
-                onClick={() =>
-                  setActiveTab("AGENT_INSPECTION")
-                }
-              >
-                Agent Inspection
-              </button>
-
-              <button
-                type="button"
-                className={
-                  activeTab === "HISTORY"
-                    ? styles.detailTabActive
-                    : ""
-                }
-                onClick={() => setActiveTab("HISTORY")}
-              >
-                History
-              </button>
+              {[
+                ["OVERVIEW", "Overview"],
+                ["DEVICE_REPORT", "Device Report"],
+                ["AGENT_INSPECTION", "Agent Inspection"],
+                ["HISTORY", "History"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={
+                    activeTab === value
+                      ? styles.detailTabActive
+                      : ""
+                  }
+                  onClick={() =>
+                    setActiveTab(value as DetailTab)
+                  }
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
             <div className={styles.modalBody}>
@@ -986,7 +1192,19 @@ export default function VendorOrders() {
               selectedOrder ? (
                 <>
                   {activeTab === "OVERVIEW" ? (
-                    <OverviewTab order={selectedOrder} />
+                    <OverviewTab
+                      order={selectedOrder}
+                      onManageAgent={() =>
+                        void openAgentAssignment({
+                          orderNumber:
+                            selectedOrder.orderNumber,
+                          productName:
+                            selectedOrder.product.name,
+                          currentAgent:
+                            selectedOrder.agent,
+                        })
+                      }
+                    />
                   ) : null}
 
                   {activeTab === "DEVICE_REPORT" ? (
@@ -1010,14 +1228,337 @@ export default function VendorOrders() {
           </section>
         </div>
       ) : null}
+
+      {assignmentTarget ? (
+        <div
+          className={styles.assignmentBackdrop}
+          role="presentation"
+          onMouseDown={(event) => {
+            if (
+              event.currentTarget === event.target &&
+              !assignmentSubmitting
+            ) {
+              closeAgentAssignment();
+            }
+          }}
+        >
+          <section
+            className={styles.assignmentModal}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="agent-assignment-title"
+          >
+            <header className={styles.assignmentHeader}>
+              <div>
+                <span className={styles.modalEyebrow}>
+                  Field Operations
+                </span>
+
+                <h2 id="agent-assignment-title">
+                  {assignmentTarget.currentAgent
+                    ? "Reassign Pickup Agent"
+                    : "Assign Pickup Agent"}
+                </h2>
+
+                <p>
+                  {assignmentTarget.productName} •{" "}
+                  {assignmentTarget.orderNumber}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className={styles.closeButton}
+                onClick={closeAgentAssignment}
+                disabled={assignmentSubmitting}
+                aria-label="Close agent assignment"
+              >
+                <X size={21} />
+              </button>
+            </header>
+
+            {assignmentTarget.currentAgent ? (
+              <div className={styles.currentAgentBanner}>
+                <div className={styles.currentAgentIcon}>
+                  <UserCheck size={20} />
+                </div>
+
+                <div>
+                  <span>Currently assigned</span>
+                  <strong>
+                    {assignmentTarget.currentAgent.name}
+                  </strong>
+
+                  {assignmentTarget.currentAgent.mobile ? (
+                    <small>
+                      {
+                        assignmentTarget.currentAgent
+                          .mobile
+                      }
+                    </small>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <div className={styles.assignmentNotice}>
+                <UsersRound size={20} />
+
+                <div>
+                  <strong>No agent assigned yet</strong>
+                  <span>
+                    Select an active agent for this pickup.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className={styles.assignmentSearch}>
+              <Search size={18} />
+
+              <input
+                type="search"
+                value={agentSearch}
+                onChange={(event) =>
+                  setAgentSearch(event.target.value)
+                }
+                placeholder="Search agent by name, mobile, email or ID"
+                aria-label="Search active agents"
+              />
+
+              {agentSearch ? (
+                <button
+                  type="button"
+                  onClick={() => setAgentSearch("")}
+                  aria-label="Clear agent search"
+                >
+                  <X size={16} />
+                </button>
+              ) : null}
+            </div>
+
+            <div className={styles.assignmentBody}>
+              {agentsLoading ? (
+                <div className={styles.agentListState}>
+                  <div className={styles.loadingSpinner} />
+                  <strong>Loading active agents...</strong>
+                </div>
+              ) : null}
+
+              {!agentsLoading && agentsError ? (
+                <div className={styles.agentListError}>
+                  <CircleAlert size={22} />
+
+                  <div>
+                    <strong>
+                      Active agents could not be loaded
+                    </strong>
+                    <span>{agentsError}</span>
+                  </div>
+                </div>
+              ) : null}
+
+              {!agentsLoading &&
+              !agentsError &&
+              filteredAgents.length === 0 ? (
+                <div className={styles.agentListEmpty}>
+                  <UsersRound size={34} />
+
+                  <strong>
+                    {agents.length === 0
+                      ? "No active agents available"
+                      : "No matching agents"}
+                  </strong>
+
+                  <span>
+                    {agents.length === 0
+                      ? "Approve or activate an agent before assigning this order."
+                      : "Try another name, mobile number or agent ID."}
+                  </span>
+                </div>
+              ) : null}
+
+              {!agentsLoading &&
+              !agentsError &&
+              filteredAgents.length > 0 ? (
+                <div className={styles.agentList}>
+                  {filteredAgents.map((agent) => {
+                    const selected =
+                      selectedAgentId === agent.id;
+
+                    const current =
+                      assignmentTarget.currentAgent?.id ===
+                      agent.id;
+
+                    return (
+                      <button
+                        key={agent.id}
+                        type="button"
+                        className={`${styles.agentOption} ${
+                          selected
+                            ? styles.agentOptionSelected
+                            : ""
+                        }`}
+                        onClick={() =>
+                          setSelectedAgentId(agent.id)
+                        }
+                      >
+                        <div className={styles.agentOptionAvatar}>
+                          {agent.fullName
+                            .trim()
+                            .slice(0, 1)
+                            .toUpperCase() || "A"}
+                        </div>
+
+                        <div
+                          className={
+                            styles.agentOptionContent
+                          }
+                        >
+                          <div
+                            className={
+                              styles.agentOptionTop
+                            }
+                          >
+                            <strong>
+                              {agent.fullName}
+                            </strong>
+
+                            {current ? (
+                              <span
+                                className={
+                                  styles.currentBadge
+                                }
+                              >
+                                Current
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <span
+                            className={
+                              styles.agentCodeText
+                            }
+                          >
+                            {agent.agentCode}
+                          </span>
+
+                          <div
+                            className={
+                              styles.agentMeta
+                            }
+                          >
+                            <span>
+                              <Phone size={13} />
+                              {agent.mobile}
+                            </span>
+
+                            {agent.email ? (
+                              <span>
+                                <Mail size={13} />
+                                {agent.email}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <span
+                          className={`${styles.selectionCircle} ${
+                            selected
+                              ? styles.selectionCircleActive
+                              : ""
+                          }`}
+                          aria-hidden="true"
+                        >
+                          {selected ? (
+                            <CheckCircle2 size={21} />
+                          ) : null}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+
+            {assignmentError ? (
+              <div className={styles.assignmentError}>
+                <CircleAlert size={18} />
+                <span>{assignmentError}</span>
+              </div>
+            ) : null}
+
+            <footer className={styles.assignmentFooter}>
+              <div className={styles.assignmentSelection}>
+                {selectedAgent ? (
+                  <>
+                    <span>Selected agent</span>
+                    <strong>
+                      {selectedAgent.fullName}
+                    </strong>
+                  </>
+                ) : (
+                  <span>Select an agent to continue</span>
+                )}
+              </div>
+
+              <div className={styles.assignmentActions}>
+                <button
+                  type="button"
+                  className={styles.cancelButton}
+                  onClick={closeAgentAssignment}
+                  disabled={assignmentSubmitting}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  className={styles.confirmAssignButton}
+                  disabled={
+                    !selectedAgentId ||
+                    assignmentSubmitting ||
+                    selectedAgentId ===
+                      assignmentTarget.currentAgent?.id
+                  }
+                  onClick={() =>
+                    void submitAgentAssignment()
+                  }
+                >
+                  {assignmentSubmitting ? (
+                    <>
+                      <RefreshCw
+                        size={17}
+                        className={styles.spin}
+                      />
+                      Saving...
+                    </>
+                  ) : assignmentTarget.currentAgent ? (
+                    <>
+                      <UserCheck size={17} />
+                      Confirm Reassignment
+                    </>
+                  ) : (
+                    <>
+                      <UserCheck size={17} />
+                      Assign Agent
+                    </>
+                  )}
+                </button>
+              </div>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }
 
 function OverviewTab({
   order,
+  onManageAgent,
 }: {
   order: VendorOrderDetails;
+  onManageAgent: () => void;
 }) {
   return (
     <div className={styles.tabContent}>
@@ -1052,7 +1593,6 @@ function OverviewTab({
           <strong>
             {order.customer?.name ?? "—"}
           </strong>
-
           <span>
             {order.customer?.phone ?? "—"}
           </span>
@@ -1063,7 +1603,6 @@ function OverviewTab({
           label="Pickup"
         >
           <strong>{formatDate(order.pickup.date)}</strong>
-
           <span>
             {order.pickup.slot?.label ??
               "Slot not available"}
@@ -1083,25 +1622,41 @@ function OverviewTab({
           ) : null}
         </DetailCard>
 
-        <DetailCard
-          icon={<UsersRound size={21} />}
-          label="Assigned Agent"
-        >
-          {order.agent ? (
-            <>
-              <strong>{order.agent.name}</strong>
-              <span>{order.agent.mobile ?? ""}</span>
-            </>
-          ) : (
-            <>
-              <strong>Not assigned</strong>
-              <span>
-                Agent assignment will be enabled in the
-                Agent module.
-              </span>
-            </>
-          )}
-        </DetailCard>
+        <div className={styles.detailCard}>
+          <div className={styles.detailCardIcon}>
+            <UsersRound size={21} />
+          </div>
+
+          <div className={styles.detailCardContent}>
+            <span className={styles.detailLabel}>
+              Assigned Agent
+            </span>
+
+            <div className={styles.detailValue}>
+              <strong>
+                {order.agent?.name ?? "Not assigned"}
+              </strong>
+
+              {order.agent?.mobile ? (
+                <span>{order.agent.mobile}</span>
+              ) : (
+                <span>
+                  Select an active field agent for pickup.
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              className={styles.overviewAgentButton}
+              onClick={onManageAgent}
+            >
+              {order.agent
+                ? "Reassign Agent"
+                : "Assign Agent"}
+            </button>
+          </div>
+        </div>
       </div>
 
       <section className={styles.infoPanel}>
@@ -1110,22 +1665,37 @@ function OverviewTab({
 
           <div>
             <h3>Pickup Address</h3>
-            <p>Customer provided pickup location</p>
+            <p>
+              Verified location provided for customer pickup
+            </p>
           </div>
         </div>
 
         <div className={styles.addressBlock}>
-          <strong>
-            {order.address?.fullName ??
-              order.customer?.name ??
-              "Customer"}
-          </strong>
+          <div className={styles.addressPerson}>
+            <div className={styles.customerAvatar}>
+              <UserRound size={17} />
+            </div>
 
-          <span>{combineAddress(order.address)}</span>
+            <div>
+              <strong>
+                {order.address?.fullName ??
+                  order.customer?.name ??
+                  "Customer"}
+              </strong>
 
-          {order.address?.phone ? (
-            <span>{order.address.phone}</span>
-          ) : null}
+              <span>
+                {order.address?.phone ??
+                  order.customer?.phone ??
+                  "Phone not available"}
+              </span>
+            </div>
+          </div>
+
+          <div className={styles.addressLocation}>
+            <MapPin size={17} />
+            <span>{combineAddress(order.address)}</span>
+          </div>
         </div>
       </section>
 
@@ -1176,15 +1746,11 @@ function DeviceReportTab({
           </span>
 
           <h3>{order.product.name}</h3>
-
-          <p>
-            {order.product.variant}
-          </p>
+          <p>{order.product.variant}</p>
         </div>
 
         <div className={styles.reportQuote}>
           <span>Original Final Quote</span>
-
           <strong>
             {formatMoney(order.pricing.finalPrice)}
           </strong>
@@ -1195,11 +1761,10 @@ function DeviceReportTab({
         <ShieldCheck size={20} />
 
         <p>
-          This report shows the customer&apos;s original
-          questionnaire selections. Historical per-answer
-          deduction is not shown unless it was frozen at the
-          time of quote. Current deduction rules are never
-          used to rewrite an old order.
+          This report preserves the customer&apos;s original
+          questionnaire selections. Current deduction rules
+          are never used to rewrite the historical customer
+          quote.
         </p>
       </div>
 
@@ -1207,9 +1772,7 @@ function DeviceReportTab({
       !report.sections?.length ? (
         <div className={styles.reportEmpty}>
           <ClipboardCheck size={40} />
-
           <h3>Device report unavailable</h3>
-
           <p>
             This order does not contain questionnaire data
             that can be resolved into a report.
@@ -1222,7 +1785,9 @@ function DeviceReportTab({
               key={section.id}
               className={styles.reportSection}
             >
-              <header className={styles.reportSectionHeader}>
+              <header
+                className={styles.reportSectionHeader}
+              >
                 <div>
                   <h3>{section.name}</h3>
 
@@ -1242,7 +1807,9 @@ function DeviceReportTab({
                     className={styles.reportCheck}
                   >
                     <div className={styles.reportQuestion}>
-                      <span className={styles.reportItemName}>
+                      <span
+                        className={styles.reportItemName}
+                      >
                         {check.name}
                       </span>
 
@@ -1300,7 +1867,6 @@ function DeviceReportTab({
       <section className={styles.reportTotals}>
         <div>
           <span>Base Price</span>
-
           <strong>
             {formatMoney(order.pricing.basePrice)}
           </strong>
@@ -1308,7 +1874,6 @@ function DeviceReportTab({
 
         <div>
           <span>Total Deduction</span>
-
           <strong>
             {formatMoney(order.pricing.totalDeduction)}
           </strong>
@@ -1316,7 +1881,6 @@ function DeviceReportTab({
 
         <div>
           <span>Final Quote</span>
-
           <strong>
             {formatMoney(order.pricing.finalPrice)}
           </strong>
@@ -1342,9 +1906,9 @@ function AgentInspectionTab({
           <h3>Agent Inspection</h3>
 
           <p>
-            Agent inspection and re-quote will remain
-            separate from the customer&apos;s original
-            questionnaire and quote.
+            Agent inspection and re-quote remain separate
+            from the customer&apos;s original questionnaire
+            and quote.
           </p>
         </div>
       </section>
@@ -1352,7 +1916,6 @@ function AgentInspectionTab({
       <div className={styles.agentQuoteComparison}>
         <div>
           <span>Original Customer Quote</span>
-
           <strong>
             {formatMoney(order.pricing.finalPrice)}
           </strong>
@@ -1360,7 +1923,6 @@ function AgentInspectionTab({
 
         <div>
           <span>Agent Final Quote</span>
-
           <strong>Not available</strong>
         </div>
       </div>
@@ -1371,10 +1933,10 @@ function AgentInspectionTab({
         <h3>No agent inspection yet</h3>
 
         <p>
-          Once an agent is assigned and the customer OTP is
-          verified, the agent inspection will appear here.
-          The customer&apos;s original Device Report will
-          remain unchanged.
+          Once the assigned agent reaches the customer and
+          completes OTP-authorized inspection, the inspection
+          result can appear here. The original customer
+          Device Report remains unchanged.
         </p>
       </div>
     </div>
@@ -1397,7 +1959,7 @@ function HistoryTab({
     })),
 
     ...order.assignmentHistory.map((entry) => ({
-      key: `assignment-${entry.id}`,
+      key: `vendor-assignment-${entry.id}`,
       type: "ASSIGNMENT",
       title: "Vendor Assigned",
       description: `${formatStatus(
@@ -1405,6 +1967,23 @@ function HistoryTab({
       )} • ${formatStatus(entry.reason)}`,
       date: entry.assignedAt,
     })),
+
+    ...(order.agentAssignmentHistory ?? []).map(
+      (entry) => ({
+        key: `agent-assignment-${entry.id}`,
+        type: "AGENT",
+        title:
+          entry.source === "REASSIGN"
+            ? "Agent Reassigned"
+            : "Agent Assigned",
+        description: `${entry.agent.name}${
+          entry.agent.mobile
+            ? ` • ${entry.agent.mobile}`
+            : ""
+        }`,
+        date: entry.assignedAt,
+      }),
+    ),
 
     ...order.reschedules.map((entry) => ({
       key: `reschedule-${entry.id}`,
@@ -1432,10 +2011,9 @@ function HistoryTab({
 
         <div>
           <h3>Order History</h3>
-
           <p>
-            Status, routing and pickup events for this
-            order.
+            Status, vendor routing, agent assignment and
+            pickup events.
           </p>
         </div>
       </section>
@@ -1454,10 +2032,10 @@ function HistoryTab({
               <div className={styles.timelineMarker}>
                 {event.type === "STATUS" ? (
                   <ClipboardCheck size={17} />
-                ) : event.type === "ASSIGNMENT" ? (
-                  <UsersRound size={17} />
-                ) : (
+                ) : event.type === "RESCHEDULE" ? (
                   <CalendarDays size={17} />
+                ) : (
+                  <UsersRound size={17} />
                 )}
               </div>
 

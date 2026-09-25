@@ -1,4 +1,4 @@
-﻿generator client {
+generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
 }
@@ -679,14 +679,17 @@ enum SellOrderStatus {
 }
 
 model Customer {
-  id        Int               @id @default(autoincrement())
-  phone     String            @unique
-  addresses CustomerAddress[]
-  orders    SellOrder[]
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  id              Int               @id @default(autoincrement())
+  phone           String            @unique
+  addresses       CustomerAddress[]
+  orders          SellOrder[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  email           String?
+  normalizedEmail String?
 
   @@index([phone])
+  @@index([normalizedEmail])
 }
 
 model CustomerAddress {
@@ -694,6 +697,7 @@ model CustomerAddress {
   customerId     Int
   customer       Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
   fullName       String
+  email          String?
   house          String
   street         String
   locality       String
@@ -728,28 +732,32 @@ model PickupSlotTemplate {
 }
 
 model SellOrder {
-  id                    String                   @id @default(cuid())
-  orderNumber           String                   @unique
+  id                    String                 @id @default(cuid())
+  orderNumber           String                 @unique
   customerId            Int
-  customer              Customer                 @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  customer              Customer               @relation(fields: [customerId], references: [id], onDelete: Restrict)
   productId             Int
   variantId             Int
   productName           String
   productImage          String?
   variantLabel          String
-  basePrice             Decimal                  @db.Decimal(12, 2)
-  totalDeduction        Decimal                  @db.Decimal(12, 2)
-  finalPrice            Decimal                  @db.Decimal(12, 2)
+  basePrice             Decimal                @db.Decimal(12, 2)
+  totalDeduction        Decimal                @db.Decimal(12, 2)
+  finalPrice            Decimal                @db.Decimal(12, 2)
   questionnaireSnapshot Json?
-  status                SellOrderStatus          @default(PICKUP_REQUESTED)
-  pickupDate            DateTime                 @db.Date
+  status                SellOrderStatus        @default(PICKUP_REQUESTED)
+  pickupDate            DateTime               @db.Date
   pickupSlotId          Int
-  pickupSlot            PickupSlotTemplate       @relation(fields: [pickupSlotId], references: [id], onDelete: Restrict)
+  pickupSlot            PickupSlotTemplate     @relation(fields: [pickupSlotId], references: [id], onDelete: Restrict)
   payoutMethod          PayoutMethod
   payoutUpiMobile       String?
+  agentAssignments      OrderAgentAssignment[]
 
-  currentVendorId Int?
-  currentVendor   Vendor? @relation(fields: [currentVendorId], references: [id], onDelete: Restrict)
+  currentVendorId        Int?
+  currentVendor          Vendor?                      @relation(fields: [currentVendorId], references: [id], onDelete: Restrict)
+  verificationChallenges OrderVerificationChallenge[]
+  events                 OrderEvent[]
+  inspection AgentOrderInspection?
 
   vendorAssignments OrderVendorAssignment[]
 
@@ -770,10 +778,8 @@ model SellOrder {
   @@index([pickupDate])
   @@index([pickupSlotId])
   @@index([createdAt])
-
   @@index([currentVendorId, status, createdAt])
 }
-
 
 enum OrderVendorAssignmentSource {
   AUTO
@@ -837,6 +843,7 @@ model OrderAddressSnapshot {
   state           String
   type            CustomerAddressType
   createdAt       DateTime            @default(now())
+  email           String?
 
   @@index([sourceAddressId])
   @@index([pincode])
@@ -1037,6 +1044,9 @@ model Vendor {
 
   currentOrders    SellOrder[]
   orderAssignments OrderVendorAssignment[]
+
+  agents                Agent[]
+  agentOrderAssignments OrderAgentAssignment[]
 
   approvedApplication VendorApplication?
 
@@ -1241,4 +1251,283 @@ model VendorAuthToken {
   createdAt DateTime @default(now())
 
   @@index([userId, type])
+}
+
+// ============================================================
+// VENDOR AGENT MANAGEMENT / ORDER ASSIGNMENT
+// ============================================================
+
+enum AgentStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  REJECTED
+  INACTIVE
+  SUSPENDED
+}
+
+enum AgentEmailOtpPurpose {
+  SIGNUP
+}
+
+model AgentEmailOtp {
+  id String @id
+
+  emailNormalized String
+  otpHash         String
+
+  expiresAt  DateTime
+  verifiedAt DateTime?
+
+  verificationTokenHash String?
+  consumedAt            DateTime?
+
+  attempts Int                  @default(0)
+  purpose  AgentEmailOtpPurpose @default(SIGNUP)
+
+  createdAt DateTime @default(now())
+
+  @@index([emailNormalized, createdAt])
+}
+
+enum OrderAgentAssignmentSource {
+  VENDOR
+  REASSIGN
+}
+
+enum OrderAgentUnassignmentReason {
+  REASSIGNED
+  MANUAL
+  AGENT_INACTIVE
+  AGENT_SUSPENDED
+}
+
+model Agent {
+  id Int @id @default(autoincrement())
+
+  agentCode String @unique
+
+  vendorId Int
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+
+  fullName String
+
+  mobile           String
+  normalizedMobile String @unique
+
+  email           String
+  normalizedEmail String @unique
+
+  aadhaarNumber String @unique
+  address       String
+
+  passwordHash String
+
+  emailVerifiedAt DateTime
+
+  status   AgentStatus    @default(PENDING_APPROVAL)
+  sessions AgentSession[]
+
+  rejectionReason String?
+  reviewedAt      DateTime?
+
+  orderAssignments OrderAgentAssignment[]
+  orderEvents      OrderEvent[]
+  inspection AgentOrderInspection[]
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  @@index([vendorId, status])
+  @@index([vendorId, createdAt])
+  @@index([status])
+}
+
+model AgentSession {
+  id String @id @default(cuid())
+
+  agentId Int
+  agent   Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  tokenHash String @unique
+
+  expiresAt  DateTime
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([agentId, revokedAt])
+  @@index([expiresAt])
+}
+
+model OrderAgentAssignment {
+  id Int @id @default(autoincrement())
+
+  orderId String
+  order   SellOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  vendorId Int
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+
+  agentId Int
+  agent   Agent @relation(fields: [agentId], references: [id], onDelete: Restrict)
+
+  source OrderAgentAssignmentSource @default(VENDOR)
+
+  assignedAt DateTime @default(now())
+
+  unassignedAt       DateTime?
+  unassignmentReason OrderAgentUnassignmentReason?
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId, unassignedAt])
+  @@index([agentId, unassignedAt])
+  @@index([vendorId, unassignedAt, assignedAt])
+  @@index([orderId, assignedAt])
+}
+
+enum OrderVerificationPurpose {
+  INSPECTION_START
+  QUOTE_ACCEPT
+  QUOTE_REJECT
+}
+
+enum OrderVerificationChannel {
+  SMS
+  EMAIL
+}
+
+enum OrderVerificationStatus {
+  PENDING
+  VERIFIED
+  EXPIRED
+  LOCKED
+  CONSUMED
+}
+
+enum OrderEventType {
+  ORDER_CREATED
+  VENDOR_ASSIGNED
+  VENDOR_UNASSIGNED
+  AGENT_ASSIGNED
+  AGENT_UNASSIGNED
+  VERIFICATION_SENT
+  VERIFICATION_VERIFIED
+  INSPECTION_STARTED
+  INSPECTION_COMPLETED
+  QUOTE_GENERATED
+  CUSTOMER_ACCEPTED
+  CUSTOMER_REJECTED
+  PAYMENT_COMPLETED
+  ORDER_COMPLETED
+  ORDER_CANCELLED
+}
+
+enum OrderEventActorType {
+  SYSTEM
+  CUSTOMER
+  VENDOR
+  AGENT
+  SUPER_ADMIN
+}
+
+model OrderVerificationChallenge {
+  id       String @id @default(cuid())
+  orderId  String
+  provider String
+
+  order SellOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  purpose OrderVerificationPurpose
+  channel OrderVerificationChannel
+
+  // EMAIL OTP only. SMS OTP may remain provider-managed.
+  otpHash String?
+
+  // Never stores the raw destination.
+  destinationMasked      String
+  destinationFingerprint String
+
+  // Later binds QUOTE_ACCEPT / QUOTE_REJECT OTP
+  // to the exact authoritative quote.
+  contextHash String?
+
+  status   OrderVerificationStatus @default(PENDING)
+  attempts Int                     @default(0)
+
+  expiresAt  DateTime
+  verifiedAt DateTime?
+  consumedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId, purpose, status, createdAt])
+  @@index([expiresAt, status])
+}
+
+model OrderEvent {
+  id String @id @default(cuid())
+
+  orderId String
+  order   SellOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  eventType OrderEventType
+  actorType OrderEventActorType
+
+  agentId Int?
+  agent   Agent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  // Prevent duplicate logical audit events on retries/double-clicks.
+  idempotencyKey String? @unique
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([orderId, eventType, createdAt])
+  @@index([agentId, createdAt])
+}
+
+
+// ============================================================
+// AGENT DEVICE INSPECTION
+// ============================================================
+
+enum AgentInspectionStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
+model AgentOrderInspection {
+  id String @id @default(cuid())
+
+  orderId String    @unique
+  order   SellOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  agentId Int
+  agent   Agent @relation(fields: [agentId], references: [id], onDelete: Restrict)
+
+  vendorId Int
+
+  status AgentInspectionStatus @default(IN_PROGRESS)
+
+  // Immutable reference values captured when inspection begins.
+  productId Int
+  variantId Int
+
+  // Agent-observed questionnaire answers only.
+  // Customer's original questionnaire remains untouched on SellOrder.
+  answers Json?
+
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agentId, status, updatedAt])
+  @@index([vendorId, status, updatedAt])
+  @@index([status, updatedAt])
 }

@@ -27,7 +27,16 @@ import { FlowConfigModule } from "./flow-config/flow-config.module.js";
 import { VendorApplicationsModule } from './vendor-applications/vendor-applications.module.js';
 import { VendorAuthModule } from './vendor-auth/vendor-auth.module.js';
 import { VendorOrdersModule } from './vendor-orders/vendor-orders.module.js';
-
+import { AgentAuthModule } from './agent-auth/agent-auth.module.js';
+import { VendorAgentsModule } from './vendor-agents/vendor-agents.module.js';
+import { AgentAccountModule } from './agent-account/agent-account.module.js';
+import { AgentDashboardModule } from './agent-dashboard/agent-dashboard.module.js';
+import {
+  AgentOrdersModule,
+} from './agent-orders/agent-orders.module.js';
+import {
+  AgentOrderVerificationModule,
+} from './agent-order-verification/agent-order-verification.module.js';
 
 @Module({
   imports: [
@@ -53,6 +62,12 @@ import { VendorOrdersModule } from './vendor-orders/vendor-orders.module.js';
     VendorApplicationsModule,
     VendorAuthModule,
     VendorOrdersModule,
+    AgentAuthModule,
+    VendorAgentsModule,
+    AgentAccountModule,
+    AgentDashboardModule,
+    AgentOrdersModule,
+    AgentOrderVerificationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

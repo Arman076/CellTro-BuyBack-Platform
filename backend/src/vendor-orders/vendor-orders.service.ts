@@ -5,6 +5,10 @@ import {
 } from "@nestjs/common";
 
 import {
+  AgentStatus,
+  OrderAgentAssignmentSource,
+  OrderAgentUnassignmentReason,
+  Prisma,
   SellOrderStatus,
 } from "../generated/prisma/client.js";
 
@@ -57,6 +61,14 @@ const STATUS_GROUPS: Record<
   ],
 };
 
+const AGENT_SUMMARY_SELECT = {
+  id: true,
+  agentCode: true,
+  fullName: true,
+  mobile: true,
+  email: true,
+} satisfies Prisma.AgentSelect;
+
 @Injectable()
 export class VendorOrdersService {
   constructor(
@@ -83,10 +95,29 @@ export class VendorOrdersService {
     return Math.min(parsed, max);
   }
 
-  private normalizeSearch(value: unknown) {
+  private normalizeSearch(
+    value: unknown,
+  ) {
     return String(value ?? "")
       .trim()
       .slice(0, 100);
+  }
+
+  private normalizeOrderNumber(
+    value: unknown,
+  ) {
+    const orderNumber =
+      String(value ?? "")
+        .trim()
+        .slice(0, 100);
+
+    if (!orderNumber) {
+      throw new BadRequestException(
+        "Order number is required.",
+      );
+    }
+
+    return orderNumber;
   }
 
   private parseStatus(
@@ -169,12 +200,6 @@ export class VendorOrdersService {
     return raw as DateFilter;
   }
 
-  /*
-   * All operational date filters are based on
-   * the active vendor assignment timestamp.
-   *
-   * Business timezone: Asia/Kolkata.
-   */
   private getAssignmentDateRange(
     filter: DateFilter,
   ) {
@@ -213,12 +238,6 @@ export class VendorOrdersService {
       )?.value,
     );
 
-    /*
-     * Construct local calendar midnight as UTC,
-     * then subtract IST offset.
-     *
-     * Avoids relying on server timezone.
-     */
     const istOffsetMs =
       330 * 60 * 1000;
 
@@ -237,9 +256,11 @@ export class VendorOrdersService {
     const dayMs =
       24 * 60 * 60 * 1000;
 
-    const tomorrowStart = new Date(
-      todayStart.getTime() + dayMs,
-    );
+    const tomorrowStart =
+      new Date(
+        todayStart.getTime() +
+          dayMs,
+      );
 
     if (filter === "TODAY") {
       return {
@@ -248,16 +269,21 @@ export class VendorOrdersService {
       };
     }
 
-    if (filter === "YESTERDAY") {
+    if (
+      filter === "YESTERDAY"
+    ) {
       return {
         gte: new Date(
-          todayStart.getTime() - dayMs,
+          todayStart.getTime() -
+            dayMs,
         ),
         lt: todayStart,
       };
     }
 
-    if (filter === "LAST_7_DAYS") {
+    if (
+      filter === "LAST_7_DAYS"
+    ) {
       return {
         gte: new Date(
           todayStart.getTime() -
@@ -299,26 +325,29 @@ export class VendorOrdersService {
   }
 
   private getStatusWhere(
-    status: SellOrderStatus | undefined,
+    status:
+      | SellOrderStatus
+      | undefined,
     statusGroup: StatusGroup,
   ) {
-    /*
-     * Exact status takes precedence.
-     * Useful for future deep filters.
-     */
     if (status) {
       return {
         status,
       };
     }
 
-    if (statusGroup === "ALL") {
+    if (
+      statusGroup === "ALL"
+    ) {
       return {};
     }
 
     return {
       status: {
-        in: STATUS_GROUPS[statusGroup],
+        in:
+          STATUS_GROUPS[
+            statusGroup
+          ],
       },
     };
   }
@@ -330,61 +359,73 @@ export class VendorOrdersService {
       return [];
     }
 
-    return value.flatMap((entry) => {
-      if (
-        !entry ||
-        typeof entry !== "object"
-      ) {
-        return [];
-      }
+    return value.flatMap(
+      (entry) => {
+        if (
+          !entry ||
+          typeof entry !==
+            "object"
+        ) {
+          return [];
+        }
 
-      const raw =
-        entry as Record<
-          string,
-          unknown
-        >;
+        const raw =
+          entry as Record<
+            string,
+            unknown
+          >;
 
-      const itemId =
-        Number(raw.itemId);
+        const itemId =
+          Number(raw.itemId);
 
-      if (!Number.isInteger(itemId)) {
-        return [];
-      }
+        if (
+          !Number.isInteger(
+            itemId,
+          )
+        ) {
+          return [];
+        }
 
-      const optionIdRaw =
-        raw.optionId;
+        const optionIdRaw =
+          raw.optionId;
 
-      const optionId =
-        optionIdRaw === null ||
-        optionIdRaw === undefined
-          ? null
-          : Number(optionIdRaw);
+        const optionId =
+          optionIdRaw === null ||
+          optionIdRaw ===
+            undefined
+            ? null
+            : Number(
+                optionIdRaw,
+              );
 
-      const optionIds =
-        this.toIntegerArray(
-          raw.optionIds,
-        );
+        const optionIds =
+          this.toIntegerArray(
+            raw.optionIds,
+          );
 
-      const childOptionIds =
-        this.toIntegerArray(
-          raw.childOptionIds,
-        );
+        const childOptionIds =
+          this.toIntegerArray(
+            raw.childOptionIds,
+          );
 
-      return [
-        {
-          itemId,
+        return [
+          {
+            itemId,
 
-          optionId:
-            optionId !== null &&
-            Number.isInteger(optionId)
-              ? optionId
-              : null,
+            optionId:
+              optionId !== null &&
+              Number.isInteger(
+                optionId,
+              )
+                ? optionId
+                : null,
 
-          optionIds,
-          childOptionIds,
-        },
-      ];
-    });
+            optionIds,
+            childOptionIds,
+          },
+        ];
+      },
+    );
   }
 
   private toIntegerArray(
@@ -398,20 +439,44 @@ export class VendorOrdersService {
       new Set(
         value
           .map(Number)
-          .filter(Number.isInteger),
+          .filter(
+            Number.isInteger,
+          ),
       ),
     );
   }
 
-  /*
-   * Historical orders currently store IDs only.
-   *
-   * We resolve CURRENT labels for readability,
-   * but we NEVER recalculate historical pricing.
-   *
-   * This method performs one batched query for
-   * all questionnaire items in the order.
-   */
+  private mapAgent(
+    agent:
+      | {
+          id: number;
+          agentCode: string;
+          fullName: string;
+          mobile: string;
+          email: string;
+        }
+      | null
+      | undefined,
+  ) {
+    if (!agent) {
+      return null;
+    }
+
+    return {
+      id: agent.id,
+      agentCode:
+        agent.agentCode,
+      name:
+        agent.fullName,
+      fullName:
+        agent.fullName,
+      mobile:
+        agent.mobile,
+      email:
+        agent.email,
+    };
+  }
+
   private async buildDeviceReport(
     questionnaireSnapshot: unknown,
   ) {
@@ -420,7 +485,9 @@ export class VendorOrdersService {
         questionnaireSnapshot,
       );
 
-    if (selections.length === 0) {
+    if (
+      selections.length === 0
+    ) {
       return {
         available: false,
         historicalLabelsResolved:
@@ -485,7 +552,8 @@ export class VendorOrdersService {
 
             orderBy: [
               {
-                displayOrder: "asc",
+                displayOrder:
+                  "asc",
               },
               {
                 id: "asc",
@@ -497,10 +565,12 @@ export class VendorOrdersService {
 
     const itemMap =
       new Map(
-        items.map((item) => [
-          item.id,
-          item,
-        ]),
+        items.map(
+          (item) => [
+            item.id,
+            item,
+          ],
+        ),
       );
 
     const sectionMap =
@@ -519,7 +589,9 @@ export class VendorOrdersService {
               id: number;
               label: string;
               value: string;
-              issueCode: string | null;
+              issueCode:
+                | string
+                | null;
               severity: string;
               parentOptionId:
                 | number
@@ -538,7 +610,8 @@ export class VendorOrdersService {
       >();
 
     for (
-      const selection of selections
+      const selection of
+      selections
     ) {
       const item =
         itemMap.get(
@@ -558,7 +631,8 @@ export class VendorOrdersService {
         >();
 
       if (
-        selection.optionId !== null
+        selection.optionId !==
+        null
       ) {
         selectedIds.set(
           selection.optionId,
@@ -570,7 +644,9 @@ export class VendorOrdersService {
         const id of
         selection.optionIds
       ) {
-        if (!selectedIds.has(id)) {
+        if (
+          !selectedIds.has(id)
+        ) {
           selectedIds.set(
             id,
             "OPTION",
@@ -617,17 +693,23 @@ export class VendorOrdersService {
               }
 
               return {
-                id: option.id,
+                id:
+                  option.id,
+
                 label:
                   option.label,
+
                 value:
                   option.value,
+
                 issueCode:
                   option.issueCode,
+
                 severity:
                   String(
                     option.severity,
                   ),
+
                 parentOptionId:
                   option.parentOptionId,
 
@@ -638,6 +720,7 @@ export class VendorOrdersService {
                           option
                             .issueGroup
                             .id,
+
                         name:
                           option
                             .issueGroup
@@ -654,7 +737,8 @@ export class VendorOrdersService {
               answer,
             ): answer is NonNullable<
               typeof answer
-            > => Boolean(answer),
+            > =>
+              Boolean(answer),
           );
 
       let section =
@@ -666,11 +750,14 @@ export class VendorOrdersService {
         section = {
           id:
             item.section.id,
+
           name:
             item.section.name,
+
           displayOrder:
             item.section
               .displayOrder,
+
           checks: [],
         };
 
@@ -681,14 +768,20 @@ export class VendorOrdersService {
       }
 
       section.checks.push({
-        itemId: item.id,
-        name: item.name,
+        itemId:
+          item.id,
+
+        name:
+          item.name,
+
         question:
           item.questionText,
+
         answerType:
           String(
             item.answerType,
           ),
+
         selectedAnswers,
       });
     }
@@ -702,58 +795,459 @@ export class VendorOrdersService {
             a.displayOrder -
             b.displayOrder,
         )
-        .map((section) => ({
-          id: section.id,
-          name: section.name,
+        .map(
+          (section) => ({
+            id:
+              section.id,
 
-          checks:
-            section.checks.sort(
-              (a, b) => {
-                const itemA =
-                  itemMap.get(
-                    a.itemId,
+            name:
+              section.name,
+
+            checks:
+              section.checks.sort(
+                (a, b) => {
+                  const itemA =
+                    itemMap.get(
+                      a.itemId,
+                    );
+
+                  const itemB =
+                    itemMap.get(
+                      b.itemId,
+                    );
+
+                  return (
+                    Number(
+                      itemA
+                        ?.displayOrder ??
+                        0,
+                    ) -
+                    Number(
+                      itemB
+                        ?.displayOrder ??
+                        0,
+                    )
                   );
-
-                const itemB =
-                  itemMap.get(
-                    b.itemId,
-                  );
-
-                return (
-                  Number(
-                    itemA?.displayOrder ??
-                      0,
-                  ) -
-                  Number(
-                    itemB?.displayOrder ??
-                      0,
-                  )
-                );
-              },
-            ),
-        }));
+                },
+              ),
+          }),
+        );
 
     return {
       available:
         sections.length > 0,
 
-      /*
-       * Important:
-       * labels come from current questionnaire
-       * master data because historical orders
-       * did not freeze labels.
-       */
       historicalLabelsResolved:
         true,
 
-      /*
-       * Never pretend current deduction rules
-       * were the rules used historically.
-       */
       perAnswerDeductionAvailable:
         false,
 
       sections,
+    };
+  }
+
+  /*
+   * Lightweight endpoint for the order
+   * assignment GUI.
+   *
+   * Only ACTIVE agents belonging to the
+   * authenticated vendor are returned.
+   */
+  async getAssignableAgents(
+    vendorId: number,
+  ) {
+    const agents =
+      await this.prisma.agent.findMany({
+        where: {
+          vendorId,
+          status:
+            AgentStatus.ACTIVE,
+        },
+
+        orderBy: [
+          {
+            fullName: "asc",
+          },
+          {
+            id: "asc",
+          },
+        ],
+
+        select: {
+          ...AGENT_SUMMARY_SELECT,
+
+          _count: {
+            select: {
+              orderAssignments: {
+                where: {
+                  vendorId,
+                  unassignedAt:
+                    null,
+                },
+              },
+            },
+          },
+        },
+      });
+
+    return {
+      data: agents.map(
+        (agent) => ({
+          ...this.mapAgent(
+            agent,
+          ),
+
+          activeAssignmentCount:
+            agent._count
+              .orderAssignments,
+        }),
+      ),
+    };
+  }
+
+  /*
+   * Assign or reassign an order.
+   *
+   * Important:
+   * - vendorId comes only from authenticated
+   *   vendor session.
+   * - agent must belong to same vendor.
+   * - agent must be ACTIVE.
+   * - customer quote/pricing/status/payout
+   *   are never modified here.
+   * - assigning same agent is idempotent.
+   */
+  async assignAgent(
+    vendorId: number,
+    orderNumberInput: unknown,
+    agentIdInput: unknown,
+  ) {
+    const orderNumber =
+      this.normalizeOrderNumber(
+        orderNumberInput,
+      );
+
+    const agentId =
+      Number(agentIdInput);
+
+    if (
+      !Number.isInteger(
+        agentId,
+      ) ||
+      agentId <= 0
+    ) {
+      throw new BadRequestException(
+        "Valid agentId is required.",
+      );
+    }
+
+    /*
+     * Validate ownership before entering
+     * write transaction.
+     */
+    const [order, agent] =
+      await Promise.all([
+        this.prisma.sellOrder.findFirst({
+          where: {
+            orderNumber,
+            currentVendorId:
+              vendorId,
+          },
+
+          select: {
+            id: true,
+            orderNumber: true,
+          },
+        }),
+
+        this.prisma.agent.findFirst({
+          where: {
+            id: agentId,
+            vendorId,
+            status:
+              AgentStatus.ACTIVE,
+          },
+
+          select:
+            AGENT_SUMMARY_SELECT,
+        }),
+      ]);
+
+    if (!order) {
+      throw new NotFoundException(
+        "Order not found.",
+      );
+    }
+
+    if (!agent) {
+      throw new BadRequestException(
+        "Agent not found, does not belong to this vendor, or is not active.",
+      );
+    }
+
+    const result =
+      await this.prisma.$transaction(
+        async (tx) => {
+          /*
+           * Re-check order ownership inside
+           * transaction. This protects against
+           * vendor rerouting between validation
+           * and assignment.
+           */
+          const lockedOrder =
+            await tx.sellOrder.findFirst({
+              where: {
+                id: order.id,
+                orderNumber,
+                currentVendorId:
+                  vendorId,
+              },
+
+              select: {
+                id: true,
+                orderNumber: true,
+              },
+            });
+
+          if (!lockedOrder) {
+            throw new NotFoundException(
+              "Order is no longer assigned to this vendor.",
+            );
+          }
+
+          /*
+           * Re-check agent state inside the
+           * transaction as well.
+           */
+          const activeAgent =
+            await tx.agent.findFirst({
+              where: {
+                id: agentId,
+                vendorId,
+                status:
+                  AgentStatus.ACTIVE,
+              },
+
+              select:
+                AGENT_SUMMARY_SELECT,
+            });
+
+          if (!activeAgent) {
+            throw new BadRequestException(
+              "Agent is no longer active or available for this vendor.",
+            );
+          }
+
+          const currentAssignments =
+            await tx.orderAgentAssignment.findMany({
+              where: {
+                orderId:
+                  lockedOrder.id,
+
+                vendorId,
+
+                unassignedAt:
+                  null,
+              },
+
+              orderBy: [
+                {
+                  assignedAt:
+                    "desc",
+                },
+                {
+                  id: "desc",
+                },
+              ],
+
+              select: {
+                id: true,
+                agentId: true,
+                source: true,
+                assignedAt: true,
+
+                agent: {
+                  select:
+                    AGENT_SUMMARY_SELECT,
+                },
+              },
+            });
+
+          const current =
+            currentAssignments[0] ??
+            null;
+
+          /*
+           * Defensive repair:
+           * Current schema has indexes but no
+           * partial unique constraint for one
+           * active assignment.
+           *
+           * If historical/concurrent bad data
+           * already contains >1 active rows,
+           * close every extra row.
+           */
+          if (
+            currentAssignments.length >
+            1
+          ) {
+            const duplicateIds =
+              currentAssignments
+                .slice(1)
+                .map(
+                  (assignment) =>
+                    assignment.id,
+                );
+
+            await tx.orderAgentAssignment.updateMany({
+              where: {
+                id: {
+                  in: duplicateIds,
+                },
+
+                unassignedAt:
+                  null,
+              },
+
+              data: {
+                unassignedAt:
+                  new Date(),
+
+                unassignmentReason:
+                  OrderAgentUnassignmentReason.REASSIGNED,
+              },
+            });
+          }
+
+          /*
+           * Idempotency:
+           * same active agent selected again
+           * means no new history row.
+           */
+          if (
+            current &&
+            current.agentId ===
+              agentId
+          ) {
+            return {
+              changed: false,
+              action:
+                "UNCHANGED" as const,
+
+              assignment: {
+                id:
+                  current.id,
+
+                source:
+                  current.source,
+
+                assignedAt:
+                  current.assignedAt,
+
+                agent:
+                  this.mapAgent(
+                    current.agent,
+                  ),
+              },
+            };
+          }
+
+          const now =
+            new Date();
+
+          if (current) {
+            /*
+             * Guarded updateMany closes every
+             * still-active assignment for this
+             * vendor/order.
+             */
+            await tx.orderAgentAssignment.updateMany({
+              where: {
+                orderId:
+                  lockedOrder.id,
+
+                vendorId,
+
+                unassignedAt:
+                  null,
+              },
+
+              data: {
+                unassignedAt:
+                  now,
+
+                unassignmentReason:
+                  OrderAgentUnassignmentReason.REASSIGNED,
+              },
+            });
+          }
+
+          const created =
+            await tx.orderAgentAssignment.create({
+              data: {
+                orderId:
+                  lockedOrder.id,
+
+                vendorId,
+
+                agentId,
+
+                source:
+                  current
+                    ? OrderAgentAssignmentSource.REASSIGN
+                    : OrderAgentAssignmentSource.VENDOR,
+
+                assignedAt:
+                  now,
+              },
+
+              select: {
+                id: true,
+                source: true,
+                assignedAt: true,
+
+                agent: {
+                  select:
+                    AGENT_SUMMARY_SELECT,
+                },
+              },
+            });
+
+          return {
+            changed: true,
+
+            action:
+              current
+                ? ("REASSIGNED" as const)
+                : ("ASSIGNED" as const),
+
+            assignment: {
+              id:
+                created.id,
+
+              source:
+                created.source,
+
+              assignedAt:
+                created.assignedAt,
+
+              agent:
+                this.mapAgent(
+                  created.agent,
+                ),
+            },
+          };
+        },
+        {
+          isolationLevel:
+            Prisma.TransactionIsolationLevel.Serializable,
+        },
+      );
+
+    return {
+      orderNumber,
+      ...result,
     };
   }
 
@@ -818,7 +1312,8 @@ export class VendorOrdersService {
       );
 
     const where = {
-      currentVendorId: vendorId,
+      currentVendorId:
+        vendorId,
 
       ...statusWhere,
 
@@ -921,7 +1416,8 @@ export class VendorOrdersService {
 
           orderBy: [
             {
-              updatedAt: "desc",
+              updatedAt:
+                "desc",
             },
             {
               id: "desc",
@@ -990,6 +1486,37 @@ export class VendorOrdersService {
                 assignedAt: true,
               },
             },
+
+            agentAssignments: {
+              where: {
+                vendorId,
+                unassignedAt:
+                  null,
+              },
+
+              orderBy: [
+                {
+                  assignedAt:
+                    "desc",
+                },
+                {
+                  id: "desc",
+                },
+              ],
+
+              take: 1,
+
+              select: {
+                id: true,
+                source: true,
+                assignedAt: true,
+
+                agent: {
+                  select:
+                    AGENT_SUMMARY_SELECT,
+                },
+              },
+            },
           },
         }),
 
@@ -999,101 +1526,124 @@ export class VendorOrdersService {
       ]);
 
     return {
-      data: rows.map((row) => ({
-        id: row.id,
+      data: rows.map(
+        (row) => {
+          const currentAgentAssignment =
+            row.agentAssignments[0] ??
+            null;
 
-        orderNumber:
-          row.orderNumber,
+          return {
+            id:
+              row.id,
 
-        productName:
-          row.productName,
+            orderNumber:
+              row.orderNumber,
 
-        variantLabel:
-          row.variantLabel,
+            productName:
+              row.productName,
 
-        finalPrice:
-          row.finalPrice,
+            variantLabel:
+              row.variantLabel,
 
-        status:
-          row.status,
+            finalPrice:
+              row.finalPrice,
 
-        pickupDate:
-          row.pickupDate,
+            status:
+              row.status,
 
-        pickupSlot:
-          row.pickupSlot,
+            pickupDate:
+              row.pickupDate,
 
-        customer:
-          row.addressSnapshot
-            ? {
-                name:
-                  row
-                    .addressSnapshot
-                    .fullName,
+            pickupSlot:
+              row.pickupSlot,
 
-                phone:
-                  row
-                    .addressSnapshot
-                    .phone,
-              }
-            : null,
+            customer:
+              row.addressSnapshot
+                ? {
+                    name:
+                      row
+                        .addressSnapshot
+                        .fullName,
 
-        address:
-          row.addressSnapshot
-            ? {
-                house:
-                  row
-                    .addressSnapshot
-                    .house,
+                    phone:
+                      row
+                        .addressSnapshot
+                        .phone,
+                  }
+                : null,
 
-                street:
-                  row
-                    .addressSnapshot
-                    .street,
+            address:
+              row.addressSnapshot
+                ? {
+                    house:
+                      row
+                        .addressSnapshot
+                        .house,
 
-                locality:
-                  row
-                    .addressSnapshot
-                    .locality,
+                    street:
+                      row
+                        .addressSnapshot
+                        .street,
 
-                landmark:
-                  row
-                    .addressSnapshot
-                    .landmark,
+                    locality:
+                      row
+                        .addressSnapshot
+                        .locality,
 
-                city:
-                  row
-                    .addressSnapshot
-                    .city,
+                    landmark:
+                      row
+                        .addressSnapshot
+                        .landmark,
 
-                state:
-                  row
-                    .addressSnapshot
-                    .state,
+                    city:
+                      row
+                        .addressSnapshot
+                        .city,
 
-                pincode:
-                  row
-                    .addressSnapshot
-                    .pincode,
-              }
-            : null,
+                    state:
+                      row
+                        .addressSnapshot
+                        .state,
 
-        assignment:
-          row.vendorAssignments[0] ??
-          null,
+                    pincode:
+                      row
+                        .addressSnapshot
+                        .pincode,
+                  }
+                : null,
 
-        /*
-         * Agent DB module is not implemented
-         * yet. Do not fabricate an agent.
-         */
-        agent: null,
+            assignment:
+              row.vendorAssignments[0] ??
+              null,
 
-        createdAt:
-          row.createdAt,
+            agent:
+              this.mapAgent(
+                currentAgentAssignment
+                  ?.agent,
+              ),
 
-        updatedAt:
-          row.updatedAt,
-      })),
+            agentAssignment:
+              currentAgentAssignment
+                ? {
+                    id:
+                      currentAgentAssignment.id,
+
+                    source:
+                      currentAgentAssignment.source,
+
+                    assignedAt:
+                      currentAgentAssignment.assignedAt,
+                  }
+                : null,
+
+            createdAt:
+              row.createdAt,
+
+            updatedAt:
+              row.updatedAt,
+          };
+        },
+      ),
 
       pagination: {
         page,
@@ -1121,24 +1671,10 @@ export class VendorOrdersService {
     orderNumberInput: unknown,
   ) {
     const orderNumber =
-      String(
-        orderNumberInput ?? "",
-      )
-        .trim()
-        .slice(0, 100);
-
-    if (!orderNumber) {
-      throw new BadRequestException(
-        "Order number is required.",
+      this.normalizeOrderNumber(
+        orderNumberInput,
       );
-    }
 
-    /*
-     * SECURITY:
-     * Never trust vendorId from frontend.
-     * Caller supplies authenticated session
-     * vendorId.
-     */
     const order =
       await this.prisma.sellOrder.findFirst({
         where: {
@@ -1202,7 +1738,8 @@ export class VendorOrdersService {
 
           statusHistory: {
             orderBy: {
-              createdAt: "asc",
+              createdAt:
+                "asc",
             },
 
             select: {
@@ -1250,17 +1787,42 @@ export class VendorOrdersService {
 
             select: {
               id: true,
-
               source: true,
               reason: true,
-
               assignedAt: true,
-
-              unassignedAt:
-                true,
-
+              unassignedAt: true,
               unassignmentReason:
                 true,
+            },
+          },
+
+          agentAssignments: {
+            where: {
+              vendorId,
+            },
+
+            orderBy: [
+              {
+                assignedAt:
+                  "desc",
+              },
+              {
+                id: "desc",
+              },
+            ],
+
+            select: {
+              id: true,
+              source: true,
+              assignedAt: true,
+              unassignedAt: true,
+              unassignmentReason:
+                true,
+
+              agent: {
+                select:
+                  AGENT_SUMMARY_SELECT,
+              },
             },
           },
         },
@@ -1272,25 +1834,29 @@ export class VendorOrdersService {
       );
     }
 
-    /*
-     * One additional query only when View
-     * Details is opened.
-     *
-     * List/dashboard never pay this cost.
-     */
     const deviceReport =
       await this.buildDeviceReport(
         order.questionnaireSnapshot,
       );
 
+    const currentAgentAssignment =
+      order.agentAssignments.find(
+        (assignment) =>
+          assignment.unassignedAt ===
+          null,
+      ) ?? null;
+
     return {
-      id: order.id,
+      id:
+        order.id,
 
       orderNumber:
         order.orderNumber,
 
       product: {
-        id: order.productId,
+        id:
+          order.productId,
+
         variantId:
           order.variantId,
 
@@ -1301,10 +1867,6 @@ export class VendorOrdersService {
           order.variantLabel,
       },
 
-      /*
-       * Frozen authoritative customer quote.
-       * Frontend must never recalculate this.
-       */
       pricing: {
         basePrice:
           order.basePrice,
@@ -1316,10 +1878,6 @@ export class VendorOrdersService {
           order.finalPrice,
       },
 
-      /*
-       * Raw historical IDs retained for
-       * backward compatibility.
-       */
       questionnaire:
         order.questionnaireSnapshot,
 
@@ -1368,10 +1926,61 @@ export class VendorOrdersService {
       reschedules:
         order.reschedules,
 
+      /*
+       * Existing vendor-routing history.
+       * Kept unchanged for compatibility.
+       */
       assignmentHistory:
         order.vendorAssignments,
 
-      agent: null,
+      /*
+       * Separate agent-assignment history.
+       * Never mix this with vendor routing.
+       */
+      agentAssignmentHistory:
+        order.agentAssignments.map(
+          (assignment) => ({
+            id:
+              assignment.id,
+
+            source:
+              assignment.source,
+
+            assignedAt:
+              assignment.assignedAt,
+
+            unassignedAt:
+              assignment.unassignedAt,
+
+            unassignmentReason:
+              assignment.unassignmentReason,
+
+            agent:
+              this.mapAgent(
+                assignment.agent,
+              ),
+          }),
+        ),
+
+      agent:
+        this.mapAgent(
+          currentAgentAssignment
+            ?.agent,
+        ),
+
+      agentAssignment:
+        currentAgentAssignment
+          ? {
+              id:
+                currentAgentAssignment.id,
+
+              source:
+                currentAgentAssignment.source,
+
+              assignedAt:
+                currentAgentAssignment.assignedAt,
+            }
+          : null,
 
       createdAt:
         order.createdAt,
@@ -1437,7 +2046,8 @@ export class VendorOrdersService {
 
           orderBy: [
             {
-              updatedAt: "desc",
+              updatedAt:
+                "desc",
             },
             {
               id: "desc",
@@ -1491,6 +2101,33 @@ export class VendorOrdersService {
                   true,
               },
             },
+
+            agentAssignments: {
+              where: {
+                vendorId,
+                unassignedAt:
+                  null,
+              },
+
+              orderBy: [
+                {
+                  assignedAt:
+                    "desc",
+                },
+                {
+                  id: "desc",
+                },
+              ],
+
+              take: 1,
+
+              select: {
+                agent: {
+                  select:
+                    AGENT_SUMMARY_SELECT,
+                },
+              },
+            },
           },
         }),
       ]);
@@ -1506,7 +2143,8 @@ export class VendorOrdersService {
       );
 
     const getCount = (
-      statuses: SellOrderStatus[],
+      statuses:
+        SellOrderStatus[],
     ) =>
       statuses.reduce(
         (total, status) =>
@@ -1603,6 +2241,13 @@ export class VendorOrdersService {
                 .vendorAssignments[0]
                 ?.assignedAt ??
               null,
+
+            agent:
+              this.mapAgent(
+                order
+                  .agentAssignments[0]
+                  ?.agent,
+              ),
 
             createdAt:
               order.createdAt,

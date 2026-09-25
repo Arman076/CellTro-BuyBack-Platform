@@ -1,0 +1,3345 @@
+
+============================================================
+FILE: .\src\questionnaire\questionnaire-quote.service.ts
+============================================================
+
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { createHash, randomInt, randomUUID } from 'crypto';
+import { PrismaService } from '../prisma/prisma/prisma.service.js';
+
+type AnswerInput = {
+  itemId: number;
+  optionId?: number;
+  optionIds?: number[];
+  childOptionIds?: number[];
+};
+
+type SendOtpInput = {
+  productId: number;
+  variantId: number;
+  phone: string;
+  answers: AnswerInput[];
+};
+
+type AppliedLine = {
+  optionId: number;
+  itemId: number;
+  sectionId: number;
+  sectionName: string;
+  calculationMode: 'MAX' | 'SUM' | 'SINGLE';
+  issueCode: string | null;
+  label: string;
+  severity: 'NORMAL' | 'SEVERE';
+  agentRejectAllowed: boolean;
+  deduction: number;
+};
+
+type QuoteResult = {
+  basePrice: number;
+  rawDeduction: number;
+  totalDeduction: number;
+  deductionCapPercent: number;
+  minimumFinalQuoteType: 'PERCENTAGE' | 'FIXED';
+  minimumFinalQuoteValue: number;
+  minimumFinalQuote: number;
+  finalPrice: number;
+  hasSevereIssue: boolean;
+  agentRejectEligible: boolean;
+  lines: AppliedLine[];
+};
+
+type OtpSession = {
+  id: string;
+  phone: string;
+  otpHash: string;
+  expiresAt: number;
+  attempts: number;
+  quote: QuoteResult;
+};
+
+@Injectable()
+export class QuestionnaireQuoteService {
+  private readonly sessions = new Map<string, OtpSession>();
+  constructor(private readonly prisma: PrismaService) {}
+
+  private toNumber(value: unknown) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  private hash(value: string) {
+    return createHash('sha256').update(value).digest('hex');
+  }
+
+  private cleanPhone(value: string) {
+    return String(value || '').replace(/\D/g, '');
+  }
+
+  private amount(type: 'PERCENTAGE' | 'FIXED', value: number, basePrice: number) {
+    return type === 'FIXED'
+      ? Math.max(0, value)
+      : Math.max(0, (basePrice * value) / 100);
+  }
+
+  private optionApplicable(
+    option: any,
+    context: {
+      categoryId: number;
+      brandId: number;
+      seriesId: number | null;
+      productId: number;
+      variantId: number;
+    },
+  ) {
+    const scope = option.applicabilityScope || 'GLOBAL';
+    const target = option.applicabilityTargetId == null
+      ? null
+      : Number(option.applicabilityTargetId);
+
+    if (scope === 'GLOBAL') return true;
+    if (target === null) return false;
+    if (scope === 'CATEGORY') return target === context.categoryId;
+    if (scope === 'BRAND') return target === context.brandId;
+    if (scope === 'SERIES') return context.seriesId !== null && target === context.seriesId;
+    if (scope === 'PRODUCT') return target === context.productId;
+    if (scope === 'VARIANT') return target === context.variantId;
+    return false;
+  }
+
+  private capabilityAllowed(option: any, capabilityIds: Set<number>) {
+    const required = (option.capabilities || []).map((x: any) => x.capabilityId);
+    return !required.length || required.some((id: number) => capabilityIds.has(id));
+  }
+
+  private resolveRule(option: any, context: any) {
+    const rules = (option.deductionRules || [])
+      .filter((rule: any) => rule.isActive)
+      .sort((a: any, b: any) => (b.priority - a.priority) || (b.id - a.id));
+
+    const scopes: Array<[string, (r: any) => boolean]> = [
+      ['VARIANT', (r) => r.variantId === context.variantId],
+      ['PRODUCT', (r) => r.productId === context.productId],
+      ['SERIES', (r) => context.seriesId !== null && r.seriesId === context.seriesId],
+      ['BRAND', (r) => r.brandId === context.brandId],
+      ['CATEGORY', (r) => r.categoryId === context.categoryId],
+      ['GLOBAL', () => true],
+    ];
+
+    for (const [scope, match] of scopes) {
+      const found = rules.find((r: any) => r.scope === scope && match(r));
+      if (found) {
+        return {
+          deductionType: found.deductionType as 'PERCENTAGE' | 'FIXED',
+          deductionValue: this.toNumber(found.deductionValue ?? found.deductionPercent),
+        };
+      }
+    }
+
+    return {
+      deductionType: option.deductionType as 'PERCENTAGE' | 'FIXED',
+      deductionValue: this.toNumber(option.deductionValue ?? option.deductionPercent),
+    };
+  }
+
+  private aggregateAmounts(
+    deductions: number[],
+    mode: 'MAX' | 'SUM' | 'SINGLE',
+  ) {
+    if (!deductions.length) return 0;
+    if (mode === 'MAX' || mode === 'SINGLE') {
+      return Math.max(0, ...deductions);
+    }
+    return deductions.reduce((sum, value) => sum + Math.max(0, value), 0);
+  }
+
+  private applyAggregationCap(
+    amount: number,
+    policy: any | null,
+    basePrice: number,
+  ) {
+    if (!policy || policy.capType == null || policy.capValue == null) {
+      return Math.max(0, amount);
+    }
+
+    const type = String(policy.capType).toUpperCase();
+    const value = this.toNumber(policy.capValue);
+    const cap = type === 'FIXED'
+      ? Math.max(0, value)
+      : Math.max(0, (basePrice * Math.min(100, value)) / 100);
+
+    return Math.min(Math.max(0, amount), cap);
+  }
+
+  private resolveAggregationPolicy(
+    policies: any[],
+    level: 'QUESTION' | 'SECTION',
+    targetId: number,
+    productId: number,
+  ) {
+    const matching = policies.filter(
+      (policy: any) =>
+        policy.isActive &&
+        policy.level === level &&
+        Number(policy.targetId) === Number(targetId),
+    );
+
+    return (
+      matching.find(
+        (policy: any) =>
+          policy.scope === 'PRODUCT' &&
+          Number(policy.productId) === Number(productId),
+      ) ||
+      matching.find((policy: any) => policy.scope === 'GLOBAL') ||
+      null
+    );
+  }
+
+  private aggregateSections(
+    lines: AppliedLine[],
+    policies: any[],
+    basePrice: number,
+    productId: number,
+  ) {
+    // V10.1: aggregation/cap is intentionally SECTION-level only.
+    // Individual issues keep their configured deduction. The section decides
+    // whether those deductions SUM, MAX, or SINGLE and then applies one cap.
+    const bySection = new Map<number, AppliedLine[]>();
+    for (const line of lines) {
+      const bucket = bySection.get(line.sectionId) || [];
+      bucket.push(line);
+      bySection.set(line.sectionId, bucket);
+    }
+
+    let total = 0;
+    for (const [sectionId, sectionLines] of bySection.entries()) {
+      const sectionPolicy = this.resolveAggregationPolicy(
+        policies,
+        'SECTION',
+        sectionId,
+        productId,
+      );
+
+      const mode = String(
+        sectionPolicy?.calculationMode ||
+          sectionLines[0]?.calculationMode ||
+          'SUM',
+      ).toUpperCase() as 'MAX' | 'SUM' | 'SINGLE';
+
+      const aggregated = this.aggregateAmounts(
+        sectionLines.map((line) => line.deduction),
+        mode,
+      );
+
+      total += this.applyAggregationCap(aggregated, sectionPolicy, basePrice);
+    }
+
+    return total;
+  }
+
+  async calculateQuote(body: SendOtpInput): Promise<QuoteResult> {
+    const variant = await this.prisma.productVariant.findUnique({
+      where: { id: Number(body.variantId) },
+      include: {
+        product: {
+          include: { capabilities: true },
+        },
+      },
+    });
+
+    if (!variant || !variant.isActive || variant.productId !== Number(body.productId)) {
+      throw new NotFoundException('Selected variant is invalid');
+    }
+    if (!variant.product || !variant.product.isActive) {
+      throw new NotFoundException('Selected product is inactive');
+    }
+
+    const basePrice = this.toNumber(variant.basePrice);
+    const context = {
+      categoryId: variant.product.categoryId,
+      brandId: variant.product.brandId,
+      seriesId: variant.product.seriesId,
+      productId: variant.productId,
+      variantId: variant.id,
+    };
+    const productCapabilityIds = new Set<number>(
+      variant.product.capabilities.map((x: any) => x.capabilityId),
+    );
+
+    const customerAudience = await this.prisma.questionnaireAudience.findUnique({
+      where: { code: 'CUSTOMER' },
+    });
+    if (!customerAudience?.isActive) {
+      throw new BadRequestException('Customer questionnaire audience is not configured');
+    }
+
+    // One questionnaire query; no per-answer / per-rule N+1 queries.
+    const questions = await this.prisma.questionnaireItem.findMany({
+      where: {
+        isActive: true,
+        section: { isActive: true },
+        audiences: { some: { audienceId: customerAudience.id } },
+        OR: [{ categoryId: null }, { categoryId: context.categoryId }],
+        AND: [{
+          OR: [
+            { applyToAllProducts: true },
+            { productMappings: { some: { productId: context.productId } } },
+          ],
+        }],
+      },
+      include: {
+        section: true,
+        options: {
+          where: { isActive: true },
+          include: {
+            capabilities: true,
+            deductionRules: { where: { isActive: true } },
+          },
+        },
+      },
+      orderBy: [
+        { section: { displayOrder: 'asc' } },
+        { displayOrder: 'asc' },
+        { id: 'asc' },
+      ],
+    });
+
+    // Safety net for legacy duplicate questions: specific-model version wins
+    // over a global question with the same section + wording.
+    const logicalQuestions = new Map<string, any>();
+    for (const q of questions as any[]) {
+      const normalized = String(q.questionText || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const key = `${q.sectionId}:${normalized}`;
+      const previous = logicalQuestions.get(key);
+      if (!previous || (previous.applyToAllProducts && !q.applyToAllProducts)) {
+        logicalQuestions.set(key, q);
+      }
+    }
+    const effectiveQuestions = [...logicalQuestions.values()];
+
+    const questionById = new Map<number, any>();
+    for (const q of effectiveQuestions) questionById.set(q.id, q);
+
+    const answers = body.answers || [];
+    const answerByItem = new Map<number, AnswerInput>();
+    for (const answer of answers) {
+      if (answerByItem.has(Number(answer.itemId))) {
+        throw new BadRequestException('Duplicate answer submitted for one question');
+      }
+      answerByItem.set(Number(answer.itemId), answer);
+    }
+
+    const missingRequired = effectiveQuestions.some((q: any) => q.isRequired && !answerByItem.has(q.id));
+    if (missingRequired) {
+      throw new BadRequestException('Please answer all required questionnaire questions');
+    }
+
+    const candidates: AppliedLine[] = [];
+
+    for (const answer of answers) {
+      const question = questionById.get(Number(answer.itemId));
+      if (!question) {
+        throw new BadRequestException('One questionnaire answer is invalid');
+      }
+
+      const mainOptions = question.options
+        .filter((o: any) => o.parentOptionId === null)
+        .filter((o: any) => this.capabilityAllowed(o, productCapabilityIds))
+        .filter((o: any) => this.optionApplicable(o, context));
+
+      const mainOptionIds = new Set(mainOptions.map((o: any) => Number(o.id)));
+      const submittedMainIds = [
+        ...new Set(
+          (question.answerType === 'MULTI_SELECT'
+            ? answer.optionIds || (answer.optionId ? [answer.optionId] : [])
+            : answer.optionId
+              ? [answer.optionId]
+              : answer.optionIds || []
+          ).map(Number),
+        ),
+      ];
+
+      if (question.answerType !== 'MULTI_SELECT' && submittedMainIds.length !== 1) {
+        throw new BadRequestException('Please select exactly one answer for this question');
+      }
+
+      if (question.answerType === 'MULTI_SELECT' && question.isRequired && submittedMainIds.length === 0) {
+        throw new BadRequestException('Please select at least one answer for this question');
+      }
+
+      if (submittedMainIds.some((id) => !mainOptionIds.has(id))) {
+        throw new BadRequestException('Selected answer does not belong to the question or is not applicable');
+      }
+
+      const selectedMainSet = new Set(submittedMainIds);
+
+      const maybePush = (candidate: any, shouldDeduct: boolean) => {
+        if (!shouldDeduct) return;
+        const rule = this.resolveRule(candidate, context);
+        const deduction = this.amount(rule.deductionType, rule.deductionValue, basePrice);
+        if (deduction <= 0) return;
+        candidates.push({
+          optionId: candidate.id,
+          itemId: question.id,
+          sectionId: question.sectionId,
+          sectionName: question.section.name,
+          calculationMode: question.section.calculationMode,
+          issueCode: candidate.issueCode || null,
+          label: candidate.label,
+          severity: candidate.severity || 'NORMAL',
+          agentRejectAllowed: Boolean(candidate.agentRejectAllowed),
+          deduction,
+        });
+      };
+
+      // MULTI_SELECT: each applicable main option can independently deduct on
+      // SELECTED or MISSING. This is useful for direct checkbox questions.
+      if (question.answerType === 'MULTI_SELECT') {
+        if (mainOptions.some((o: any) => o.showChildOptions)) {
+          throw new BadRequestException(
+            'Multi Choice main options cannot open detailed issue groups. Use Yes/No + detailed issues for grouped selections.',
+          );
+        }
+
+        for (const option of mainOptions) {
+          const selected = selectedMainSet.has(Number(option.id));
+          const shouldDeduct =
+            option.deductionTrigger === 'MISSING' ? !selected : selected;
+          maybePush(option, shouldDeduct);
+        }
+        continue;
+      }
+
+      const option = mainOptions.find((o: any) =>
+        selectedMainSet.has(Number(o.id)),
+      );
+      if (!option) {
+        throw new BadRequestException('Selected answer does not belong to the question');
+      }
+
+      const children = question.options
+        .filter((o: any) => o.parentOptionId === option.id)
+        .filter((o: any) => this.capabilityAllowed(o, productCapabilityIds))
+        .filter((o: any) => this.optionApplicable(o, context));
+
+      const applicableChildIds = new Set(children.map((c: any) => Number(c.id)));
+      const selectedChildIds = [
+        ...new Set((answer.childOptionIds || []).map(Number)),
+      ];
+
+      if (selectedChildIds.some((id) => !applicableChildIds.has(id))) {
+        throw new BadRequestException('One selected sub-option is not applicable');
+      }
+
+      if (option.showChildOptions) {
+        const min = option.requireChildSelection
+          ? Math.max(1, option.minChildSelections || 1)
+          : option.minChildSelections || 0;
+        if (selectedChildIds.length < min) {
+          throw new BadRequestException(
+            `Minimum ${min} sub-option selection required`,
+          );
+        }
+        if (
+          option.maxChildSelections &&
+          selectedChildIds.length > option.maxChildSelections
+        ) {
+          throw new BadRequestException('Too many sub-options selected');
+        }
+        if (
+          option.childSelectionMode === 'SINGLE' &&
+          selectedChildIds.length > 1
+        ) {
+          throw new BadRequestException('Only one sub-option can be selected');
+        }
+      } else if (selectedChildIds.length) {
+        throw new BadRequestException('Sub-options are not allowed for this answer');
+      }
+
+      maybePush(option, option.deductionTrigger === 'SELECTED');
+
+      if (option.showChildOptions) {
+        const selectedSet = new Set(selectedChildIds);
+        for (const child of children) {
+          const selected = selectedSet.has(Number(child.id));
+          const shouldDeduct =
+            child.deductionTrigger === 'MISSING' ? !selected : selected;
+          maybePush(child, shouldDeduct);
+        }
+      }
+    }
+
+    // Global double-deduction guard. Same physical defect (issueCode) is charged once.
+    // This is deliberately before section aggregation, so duplicate UI paths cannot inflate a section.
+    // Future agent flow must reuse the same issueCode and merge AGENT > CUSTOMER observations
+    // before they reach this pricing stage. If both confirm the same issue, this guard still charges once.
+    // If duplicate representations have different values, keep the larger applicable deduction.
+    const deduped = new Map<string, AppliedLine>();
+    for (const line of candidates) {
+      const key = line.issueCode ? `ISSUE:${line.issueCode}` : `OPTION:${line.optionId}`;
+      const previous = deduped.get(key);
+      if (!previous || line.deduction > previous.deduction) deduped.set(key, line);
+    }
+    const lines = [...deduped.values()];
+
+    // One lightweight policy query for the full quote calculation.
+    // PRODUCT policies override GLOBAL policies; no per-question database calls.
+    const aggregationPolicies =
+      await this.prisma.questionnaireAggregationPolicy.findMany({
+        where: {
+          isActive: true,
+          OR: [
+            { scope: 'GLOBAL' },
+            { scope: 'PRODUCT', productId: context.productId },
+          ],
+        },
+      });
+
+    const rawDeduction = this.aggregateSections(
+      lines,
+      aggregationPolicies,
+      basePrice,
+      context.productId,
+    );
+    const hasSevereIssue = lines.some((x) => x.severity === 'SEVERE');
+
+    const productPolicy = await this.prisma.questionnaireQuotePolicy.findUnique({
+      where: { key: `PRODUCT:${context.productId}` },
+    });
+    const globalPolicy = await this.prisma.questionnaireQuotePolicy.findUnique({
+      where: { key: 'GLOBAL' },
+    });
+    const policy = productPolicy?.isActive
+      ? productPolicy
+      : globalPolicy?.isActive
+        ? globalPolicy
+        : null;
+
+    const legacyPercent = hasSevereIssue
+      ? this.toNumber(policy?.severeMinQuotePercent ?? 2)
+      : this.toNumber(policy?.normalMinQuotePercent ?? 10);
+    const minimumFinalType = String(
+      hasSevereIssue
+        ? policy?.severeMinQuoteType || 'PERCENTAGE'
+        : policy?.normalMinQuoteType || 'PERCENTAGE',
+    ).toUpperCase();
+    const configuredValue = hasSevereIssue
+      ? policy?.severeMinQuoteValue
+      : policy?.normalMinQuoteValue;
+    const minimumFinalValue =
+      configuredValue == null ? legacyPercent : this.toNumber(configuredValue);
+
+    const minimumFinalQuote =
+      minimumFinalType === 'FIXED'
+        ? Math.min(basePrice, Math.max(0, minimumFinalValue))
+        : (basePrice * Math.min(100, Math.max(0, minimumFinalValue))) / 100;
+
+    const maxAllowedDeduction = Math.max(0, basePrice - minimumFinalQuote);
+    const totalDeduction = Math.min(Math.max(0, rawDeduction), maxAllowedDeduction);
+    const deductionCapPercent =
+      basePrice > 0 ? (maxAllowedDeduction / basePrice) * 100 : 0;
+
+    return {
+      basePrice: Math.round(basePrice),
+      rawDeduction: Math.round(rawDeduction),
+      totalDeduction: Math.round(totalDeduction),
+      deductionCapPercent: Number(deductionCapPercent.toFixed(2)),
+      minimumFinalQuoteType: minimumFinalType as 'PERCENTAGE' | 'FIXED',
+      minimumFinalQuoteValue: minimumFinalValue,
+      minimumFinalQuote: Math.round(minimumFinalQuote),
+      finalPrice: Math.max(0, Math.round(basePrice - totalDeduction)),
+      hasSevereIssue,
+      agentRejectEligible: lines.some((x) => x.agentRejectAllowed),
+      lines: lines.map((x) => ({ ...x, deduction: Math.round(x.deduction) })),
+    };
+  }
+
+  async sendOtp(body: SendOtpInput) {
+    const phone = this.cleanPhone(body.phone);
+    if (!/^[6-9]\d{9}$/.test(phone)) {
+      throw new BadRequestException('Enter a valid 10-digit Indian mobile number');
+    }
+
+    const quote = await this.calculateQuote(body);
+    const otp = String(randomInt(100000, 1000000));
+    const sessionId = randomUUID();
+
+    this.sessions.set(sessionId, {
+      id: sessionId,
+      phone,
+      otpHash: this.hash(otp),
+      expiresAt: Date.now() + 5 * 60 * 1000,
+      attempts: 0,
+      quote,
+    });
+
+    return {
+      sessionId,
+      expiresInSeconds: 300,
+      ...(process.env.NODE_ENV !== 'production' ? { devOtp: otp } : {}),
+    };
+  }
+
+  async verifyOtp(sessionId: string, otp: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new UnauthorizedException('OTP session is invalid or expired');
+    if (Date.now() > session.expiresAt) {
+      this.sessions.delete(sessionId);
+      throw new UnauthorizedException('OTP has expired');
+    }
+    if (session.attempts >= 5) {
+      this.sessions.delete(sessionId);
+      throw new UnauthorizedException('Too many invalid OTP attempts');
+    }
+
+    session.attempts += 1;
+    if (this.hash(String(otp)) !== session.otpHash) {
+      throw new UnauthorizedException('Invalid OTP');
+    }
+
+    const result = {
+      verified: true,
+      phone: session.phone,
+      ...session.quote,
+    };
+    this.sessions.delete(sessionId);
+    return result;
+  }
+}
+
+============================================================
+FILE: .\src\questionnaire\questionnaire-quote.controller.ts
+============================================================
+
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Post,
+  Req,
+  Res,
+} from "@nestjs/common";
+
+import type {
+  Request,
+  Response,
+} from "express";
+import {
+  createHash,
+  randomBytes,
+  randomUUID,
+} from "crypto";
+
+import {
+  QuestionnaireQuoteService,
+} from "./questionnaire-quote.service.js";
+
+import {
+  PrismaService,
+} from "../prisma/prisma/prisma.service.js";
+
+const CUSTOMER_SESSION_HOURS = 24;
+const MAX_DISTINCT_DEVICES_PER_SESSION = 3;
+const CUSTOMER_SESSION_COOKIE = "celltro_customer_session";
+
+@Controller("questionnaire/quote")
+export class QuestionnaireQuoteController {
+  constructor(
+    private readonly service:
+      QuestionnaireQuoteService,
+
+    private readonly prisma:
+      PrismaService,
+  ) {}
+
+  private normalizePhone(
+    value: unknown,
+  ) {
+    return String(value ?? "")
+      .replace(/\D/g, "");
+  }
+
+  private readCustomerSessionCookie(
+    request: Request,
+  ) {
+    const rawCookieHeader =
+      String(
+        request.headers.cookie ?? "",
+      );
+
+    for (const part of rawCookieHeader.split(";")) {
+      const [rawName, ...rawValueParts] =
+        part.trim().split("=");
+
+      if (
+        rawName ===
+        CUSTOMER_SESSION_COOKIE
+      ) {
+        return decodeURIComponent(
+          rawValueParts.join("="),
+        ).trim();
+      }
+    }
+
+    return "";
+  }
+
+  private writeCustomerSessionCookie(
+    response: Response,
+    rawToken: string,
+  ) {
+    response.cookie(
+      CUSTOMER_SESSION_COOKIE,
+      rawToken,
+      {
+        httpOnly: true,
+        secure:
+          process.env.NODE_ENV ===
+          "production",
+        sameSite: "lax",
+        maxAge:
+          CUSTOMER_SESSION_HOURS *
+          60 *
+          60 *
+          1000,
+        path: "/",
+      },
+    );
+  }
+
+  private hashToken(
+    value: string,
+  ) {
+    return createHash("sha256")
+      .update(value)
+      .digest("hex");
+  }
+
+  private async getVerifiedSession(
+    rawToken: string,
+    phone: string,
+  ) {
+    const token =
+      String(rawToken || "").trim();
+
+    if (!token) {
+      return null;
+    }
+
+    return this.prisma.customerVerifiedSession.findFirst({
+      where: {
+        tokenHash:
+          this.hashToken(token),
+
+        phone,
+
+        revokedAt:
+          null,
+
+        expiresAt: {
+          gt: new Date(),
+        },
+      },
+    });
+  }
+
+  private async createVerifiedSession(
+    phone: string,
+    previousToken?: string,
+  ) {
+    const rawToken =
+      randomBytes(32)
+        .toString("hex");
+
+    const now =
+      new Date();
+
+    const expiresAt =
+      new Date(
+        now.getTime() +
+          CUSTOMER_SESSION_HOURS *
+            60 *
+            60 *
+            1000,
+      );
+
+    const oldToken =
+      String(
+        previousToken || "",
+      ).trim();
+
+    if (oldToken) {
+      await this.prisma.customerVerifiedSession.updateMany({
+        where: {
+          tokenHash:
+            this.hashToken(
+              oldToken,
+            ),
+
+          phone,
+
+          revokedAt:
+            null,
+        },
+
+        data: {
+          revokedAt:
+            now,
+        },
+      });
+    }
+
+    const session =
+      await this.prisma.customerVerifiedSession.create({
+        data: {
+          tokenHash:
+            this.hashToken(
+              rawToken,
+            ),
+
+          phone,
+
+          verifiedAt:
+            now,
+
+          expiresAt,
+        },
+      });
+
+    return {
+      rawToken,
+      session,
+    };
+  }
+
+  private async findOpenJourney(
+    phone: string,
+    productId: number,
+    variantId: number,
+  ) {
+    return this.prisma.enquirySession.findFirst({
+      where: {
+        phone,
+        productId,
+        variantId,
+        orderId:
+          null,
+      },
+
+      orderBy: {
+        updatedAt:
+          "desc",
+      },
+    });
+  }
+
+  private async sessionCanQuoteDevice(
+    verifiedSessionId: string,
+    productId: number,
+    variantId: number,
+  ) {
+    const quotedJourneys =
+      await this.prisma.enquirySession.findMany({
+        where: {
+          verifiedSessionId,
+
+          quoteViewedAt: {
+            not: null,
+          },
+        },
+
+        select: {
+          productId: true,
+          variantId: true,
+        },
+      });
+
+    const uniqueDevices =
+      new Set(
+        quotedJourneys
+          .filter(
+            (
+              item,
+            ) =>
+              item.productId !==
+                null &&
+              item.variantId !==
+                null,
+          )
+          .map(
+            (
+              item,
+            ) =>
+              `${item.productId}:${item.variantId}`,
+          ),
+      );
+
+    const currentKey =
+      `${productId}:${variantId}`;
+
+    if (
+      uniqueDevices.has(
+        currentKey,
+      )
+    ) {
+      return true;
+    }
+
+    return (
+      uniqueDevices.size <
+      MAX_DISTINCT_DEVICES_PER_SESSION
+    );
+  }
+
+  @Post("preview")
+  preview(
+    @Body()
+    body: any,
+  ) {
+    return this.service.calculateQuote(
+      body,
+    );
+  }
+
+  @Post("send-otp")
+  async sendOtp(
+    @Body()
+    body: any,
+
+    @Req()
+    request: Request,
+  ) {
+    const phone =
+      this.normalizePhone(
+        body?.phone,
+      );
+
+    const productId =
+      Number(
+        body?.productId,
+      );
+
+    const variantId =
+      Number(
+        body?.variantId,
+      );
+
+    if (
+      !/^[6-9]\d{9}$/.test(
+        phone,
+      )
+    ) {
+      throw new BadRequestException(
+        "Enter a valid 10-digit mobile number.",
+      );
+    }
+
+    if (
+      !Number.isInteger(
+        productId,
+      ) ||
+      !Number.isInteger(
+        variantId,
+      )
+    ) {
+      throw new BadRequestException(
+        "Valid product and variant are required.",
+      );
+    }
+
+    const existingOrder =
+      await this.prisma.sellOrder.findFirst({
+        where: {
+          productId,
+          variantId,
+
+          status: {
+            notIn: [
+              "COMPLETED",
+              "CANCELLED",
+            ],
+          },
+
+          customer: {
+            is: {
+              phone,
+            },
+          },
+        },
+
+        orderBy: {
+          createdAt:
+            "desc",
+        },
+
+        select: {
+          orderNumber: true,
+          status: true,
+        },
+      });
+
+    if (existingOrder) {
+      return {
+        existingOrder:
+          true,
+
+        orderNumber:
+          existingOrder.orderNumber,
+
+        orderStatus:
+          existingOrder.status,
+
+        message:
+          "An active order already exists for this device.",
+      };
+    }
+
+    /*
+     * Production source of truth = HttpOnly cookie.
+     * Body token is accepted only as a temporary local-development
+     * compatibility path while the customer frontend is migrated.
+     */
+    const cookieSessionToken =
+      this.readCustomerSessionCookie(
+        request,
+      );
+
+    const legacyBodyToken =
+      process.env.NODE_ENV !==
+      "production"
+        ? String(
+            body?.customerSessionToken ||
+              "",
+          ).trim()
+        : "";
+
+    const customerSessionToken =
+      cookieSessionToken ||
+      legacyBodyToken;
+
+    const verifiedSession =
+      await this.getVerifiedSession(
+        customerSessionToken,
+        phone,
+      );
+
+    if (verifiedSession) {
+      const canQuoteWithoutOtp =
+        await this.sessionCanQuoteDevice(
+          verifiedSession.id,
+          productId,
+          variantId,
+        );
+
+      if (
+        canQuoteWithoutOtp
+      ) {
+        const quote =
+          await this.service.calculateQuote(
+            body,
+          );
+
+        const now =
+          new Date();
+
+        const existingJourney =
+          await this.findOpenJourney(
+            phone,
+            productId,
+            variantId,
+          );
+
+        const journey =
+          existingJourney
+            ? await this.prisma.enquirySession.update({
+                where: {
+                  id:
+                    existingJourney.id,
+                },
+
+                data: {
+                  verifiedSessionId:
+                    verifiedSession.id,
+
+                  questionnaireSnapshot:
+                    body?.answers ??
+                    undefined,
+
+                  questionnaireCompletedAt:
+                    existingJourney
+                      .questionnaireCompletedAt ??
+                    now,
+
+                  /*
+                   * 24-hour verified session proves identity,
+                   * but this is NOT a fresh SMS OTP verification.
+                   */
+                  identityVerifiedAt:
+                    existingJourney
+                      .identityVerifiedAt ??
+                    now,
+
+                  /*
+                   * Preserve the first quote-view timestamp.
+                   * Requoting / changing questionnaire answers
+                   * must not restart the 10-minute inquiry clock.
+                   */
+                  quoteViewedAt:
+                    existingJourney
+                      .quoteViewedAt ??
+                    now,
+
+                  quoteAmount:
+                    Number(
+                      quote.finalPrice,
+                    ),
+                },
+              })
+            : await this.prisma.enquirySession.create({
+                data: {
+                  sessionId:
+                    randomUUID(),
+
+                  phone,
+                  productId,
+                  variantId,
+
+                  verifiedSessionId:
+                    verifiedSession.id,
+
+                  questionnaireSnapshot:
+                    body?.answers ??
+                    undefined,
+
+                  questionnaireCompletedAt:
+                    now,
+
+                  /*
+                   * Identity trusted through existing 24h session.
+                   * otpVerifiedAt intentionally stays NULL because
+                   * no SMS OTP was verified for this device journey.
+                   */
+                  identityVerifiedAt:
+                    now,
+
+                  quoteViewedAt:
+                    now,
+
+                  quoteAmount:
+                    Number(
+                      quote.finalPrice,
+                    ),
+                },
+              });
+
+        return {
+          existingOrder:
+            false,
+
+          otpRequired:
+            false,
+
+          sessionId:
+            journey.sessionId,
+
+          customerSessionExpiresAt:
+            verifiedSession.expiresAt.toISOString(),
+
+          ...quote,
+        };
+      }
+    }
+
+    const result =
+      await this.service.sendOtp(
+        body,
+      );
+
+    const sessionId =
+      String(
+        result?.sessionId ??
+          "",
+      ).trim();
+
+    if (!sessionId) {
+      throw new BadRequestException(
+        "OTP session could not be created.",
+      );
+    }
+
+    const now =
+      new Date();
+
+    const existingJourney =
+      await this.findOpenJourney(
+        phone,
+        productId,
+        variantId,
+      );
+
+    if (existingJourney) {
+      await this.prisma.enquirySession.update({
+        where: {
+          id:
+            existingJourney.id,
+        },
+
+        data: {
+          sessionId,
+
+          otpSentAt:
+            now,
+
+          questionnaireSnapshot:
+            body?.answers ??
+            undefined,
+
+          questionnaireCompletedAt:
+            existingJourney
+              .questionnaireCompletedAt ??
+            now,
+        },
+      });
+    } else {
+      await this.prisma.enquirySession.create({
+        data: {
+          sessionId,
+          phone,
+          productId,
+          variantId,
+
+          questionnaireSnapshot:
+            body?.answers ??
+            undefined,
+
+          questionnaireCompletedAt:
+            now,
+
+          otpSentAt:
+            now,
+        },
+      });
+    }
+
+    return {
+      ...result,
+
+      existingOrder:
+        false,
+
+      otpRequired:
+        true,
+    };
+  }
+
+  @Post("verify-otp")
+  async verifyOtp(
+    @Body()
+    body: {
+      sessionId: string;
+      otp: string;
+      customerSessionToken?: string;
+    },
+
+    @Req()
+    request: Request,
+
+    @Res({
+      passthrough: true,
+    })
+    response: Response,
+  ) {
+    const result =
+      await this.service.verifyOtp(
+        body.sessionId,
+        body.otp,
+      );
+
+    const phone =
+      this.normalizePhone(
+        result?.phone,
+      );
+
+    if (
+      !/^[6-9]\d{9}$/.test(
+        phone,
+      )
+    ) {
+      throw new BadRequestException(
+        "Verified mobile number is invalid.",
+      );
+    }
+
+    const journey =
+      await this.prisma.enquirySession.findUnique({
+        where: {
+          sessionId:
+            String(
+              body.sessionId ||
+                "",
+            ),
+        },
+      });
+
+    if (!journey) {
+      throw new BadRequestException(
+        "Quote journey could not be found. Please request OTP again.",
+      );
+    }
+
+    const {
+      rawToken,
+      session:
+        verifiedSession,
+    } =
+      await this.createVerifiedSession(
+        phone,
+        this.readCustomerSessionCookie(
+          request,
+        ) ||
+          (
+            process.env.NODE_ENV !==
+            "production"
+              ? body.customerSessionToken
+              : undefined
+          ),
+      );
+
+    const now =
+      new Date();
+
+    await this.prisma.enquirySession.update({
+      where: {
+        id:
+          journey.id,
+      },
+
+      data: {
+        verifiedSessionId:
+          verifiedSession.id,
+
+        /*
+         * These three timestamps have different meanings:
+         * - otpVerifiedAt: actual SMS OTP success
+         * - identityVerifiedAt: identity can now be trusted
+         * - quoteViewedAt: first time this device quote was revealed
+         */
+        otpVerifiedAt:
+          journey.otpVerifiedAt ??
+          now,
+
+        identityVerifiedAt:
+          journey.identityVerifiedAt ??
+          now,
+
+        quoteViewedAt:
+          journey.quoteViewedAt ??
+          now,
+
+        quoteAmount:
+          Number(
+            result?.finalPrice,
+          ),
+      },
+    });
+
+    this.writeCustomerSessionCookie(
+      response,
+      rawToken,
+    );
+
+    return {
+      ...result,
+
+      /*
+       * Temporary backward compatibility for local development only.
+       * Production never exposes the bearer token to browser JavaScript.
+       */
+      ...(
+        process.env.NODE_ENV !==
+        "production"
+          ? {
+              customerSessionToken:
+                rawToken,
+            }
+          : {}
+      ),
+
+      customerSessionExpiresAt:
+        verifiedSession.expiresAt.toISOString(),
+
+      maxDistinctDevicesPerSession:
+        MAX_DISTINCT_DEVICES_PER_SESSION,
+    };
+  }
+}
+
+============================================================
+FILE: .\src\questionnaire\questionnaire-branch.service.ts
+============================================================
+
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma/prisma.service.js';
+
+type DeductionType = 'PERCENTAGE' | 'FIXED';
+type DeductionTrigger = 'SELECTED' | 'MISSING';
+type ChildSelectionMode = 'SINGLE' | 'MULTI';
+
+type ChildOptionInput = {
+  id?: number;
+  label: string;
+  value?: string;
+  issueCode?: string | null;
+  deductionType?: DeductionType;
+  deductionValue?: number;
+  deductionTrigger?: DeductionTrigger;
+  displayOrder?: number;
+  isActive?: boolean;
+  capabilityIds?: number[];
+  applicabilityScope?: 'GLOBAL' | 'CATEGORY' | 'BRAND' | 'SERIES' | 'PRODUCT' | 'VARIANT';
+  applicabilityTargetId?: number | null;
+  severity?: 'NORMAL' | 'SEVERE';
+  agentRejectAllowed?: boolean;
+};
+
+type IssueGroupInput = {
+  id?: number;
+  name: string;
+  displayOrder?: number;
+  isActive?: boolean;
+  childOptions?: ChildOptionInput[];
+};
+
+type BranchOptionInput = ChildOptionInput & {
+  showChildOptions?: boolean;
+  childPrompt?: string | null;
+  requireChildSelection?: boolean;
+  minChildSelections?: number;
+  maxChildSelections?: number | null;
+  childSelectionMode?: ChildSelectionMode;
+
+  // Legacy/simple branch:
+  childOptions?: ChildOptionInput[];
+
+  // V4 grouped branch:
+  issueGroups?: IssueGroupInput[];
+};
+
+type QuestionInput = {
+  code?: string;
+  name: string;
+  questionText: string;
+  answerType: 'YES_NO' | 'SINGLE_SELECT' | 'MULTI_SELECT';
+  sectionId: number;
+  categoryId?: number | null;
+  displayOrder?: number;
+  isRequired?: boolean;
+  isActive?: boolean;
+  applyToAllProducts?: boolean;
+  audienceIds: number[];
+  productIds?: number[];
+  options: BranchOptionInput[];
+};
+
+@Injectable()
+export class QuestionnaireBranchService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  private normalize(value: string) {
+    return value
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  private normalizedText(value: string) {
+    return value.trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  private number(value: unknown, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  private validateDeduction(type: DeductionType, value: number) {
+    if (value < 0) {
+      throw new BadRequestException('Deduction cannot be negative');
+    }
+    if (type === 'PERCENTAGE' && value > 100) {
+      throw new BadRequestException('Percentage deduction cannot exceed 100');
+    }
+  }
+
+  private validateBranch(option: BranchOptionInput) {
+    const min = this.number(option.minChildSelections, 0);
+    const max =
+      option.maxChildSelections === null ||
+      option.maxChildSelections === undefined
+        ? null
+        : this.number(option.maxChildSelections);
+
+    if (min < 0) {
+      throw new BadRequestException('Minimum child selection cannot be negative');
+    }
+    if (max !== null && max < min) {
+      throw new BadRequestException(
+        'Maximum child selection cannot be lower than minimum',
+      );
+    }
+  }
+
+  private async validateMasterData(data: QuestionInput, editingId?: number) {
+    const section = await this.prisma.questionnaireSection.findUnique({
+      where: { id: Number(data.sectionId) },
+    });
+    if (!section) {
+      throw new BadRequestException('Questionnaire section does not exist');
+    }
+
+    if (data.categoryId) {
+      const category = await this.prisma.category.findUnique({
+        where: { id: Number(data.categoryId) },
+      });
+      if (!category) throw new BadRequestException('Selected category does not exist');
+    }
+
+    if (!data.audienceIds?.length) {
+      throw new BadRequestException('At least one audience is required');
+    }
+
+    const audienceIds = [...new Set(data.audienceIds.map(Number))];
+    const audienceCount = await this.prisma.questionnaireAudience.count({
+      where: { id: { in: audienceIds }, isActive: true },
+    });
+    if (audienceCount !== audienceIds.length) {
+      throw new BadRequestException('One or more selected audiences are invalid');
+    }
+
+    if (data.applyToAllProducts === false) {
+      if (!data.productIds?.length) {
+        throw new BadRequestException(
+          'Select at least one model for a model-specific question',
+        );
+      }
+      const ids = [...new Set(data.productIds.map(Number))];
+      const count = await this.prisma.product.count({
+        where: {
+          id: { in: ids },
+          ...(data.categoryId ? { categoryId: Number(data.categoryId) } : {}),
+        },
+      });
+      if (count !== ids.length) {
+        throw new BadRequestException('One or more selected products are invalid');
+      }
+    }
+
+    if (!data.options?.length) {
+      throw new BadRequestException('At least one answer is required');
+    }
+
+    // Avoid duplicate question wording in the same section/scope.
+    const candidates = await this.prisma.questionnaireItem.findMany({
+      where: {
+        sectionId: Number(data.sectionId),
+        ...(data.categoryId ? { categoryId: Number(data.categoryId) } : {}),
+        ...(editingId ? { id: { not: editingId } } : {}),
+      },
+      include: { productMappings: true },
+    });
+
+    const wanted = this.normalizedText(data.questionText);
+    const wantedProducts = new Set((data.productIds || []).map(Number));
+
+    const duplicate = candidates.find((q: any) => {
+      if (this.normalizedText(q.questionText) !== wanted) return false;
+
+      if (data.applyToAllProducts !== false && q.applyToAllProducts) return true;
+      if (data.applyToAllProducts === false && !q.applyToAllProducts) {
+        return q.productMappings.some((m: any) => wantedProducts.has(m.productId));
+      }
+      return false;
+    });
+
+    if (duplicate) {
+      throw new BadRequestException(
+        'A similar question is already configured for this section and scope',
+      );
+    }
+  }
+
+  private async syncCapabilities(
+    tx: any,
+    optionId: number,
+    capabilityIds: number[] = [],
+  ) {
+    await tx.questionnaireOptionCapability.deleteMany({ where: { optionId } });
+
+    const unique = [...new Set(capabilityIds.map(Number))];
+    if (!unique.length) return;
+
+    const valid = await tx.deviceCapability.count({
+      where: { id: { in: unique }, isActive: true },
+    });
+    if (valid !== unique.length) {
+      throw new BadRequestException('One or more capability filters are invalid');
+    }
+
+    await tx.questionnaireOptionCapability.createMany({
+      data: unique.map((capabilityId) => ({ optionId, capabilityId })),
+      skipDuplicates: true,
+    });
+  }
+
+  private async uniqueValue(
+    tx: any,
+    itemId: number,
+    value: string,
+    optionId?: number,
+  ) {
+    const normalized = this.normalize(value);
+    const duplicate = await tx.questionnaireOption.findFirst({
+      where: {
+        itemId,
+        value: normalized,
+        ...(optionId ? { id: { not: optionId } } : {}),
+      },
+      select: { id: true },
+    });
+
+    if (!duplicate) return normalized;
+    return optionId
+      ? `${normalized}_${optionId}`
+      : `${normalized}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+  }
+
+  private async saveChild(
+    tx: any,
+    itemId: number,
+    parentOptionId: number,
+    issueGroupId: number | null,
+    child: ChildOptionInput,
+    displayOrder: number,
+    seenOptionIds: number[],
+  ) {
+    if (!child.label?.trim()) {
+      throw new BadRequestException('Issue/sub-option label is required');
+    }
+
+    const deductionType = child.deductionType ?? 'PERCENTAGE';
+    const deductionValue = this.number(child.deductionValue, 0);
+    const deductionTrigger = child.deductionTrigger ?? 'SELECTED';
+    this.validateDeduction(deductionType, deductionValue);
+
+    const value = await this.uniqueValue(
+      tx,
+      itemId,
+      child.value || child.label,
+      child.id,
+    );
+
+    const data: any = {
+      label: child.label.trim(),
+      value,
+      issueCode: child.issueCode ? this.normalize(child.issueCode) : null,
+      deductionPercent: deductionType === 'PERCENTAGE' ? deductionValue : 0,
+      deductionType,
+      deductionValue,
+      deductionTrigger,
+      applicabilityScope: child.applicabilityScope ?? 'GLOBAL',
+      applicabilityTargetId: child.applicabilityScope && child.applicabilityScope !== 'GLOBAL' ? Number(child.applicabilityTargetId) : null,
+      severity: child.severity ?? 'NORMAL',
+      agentRejectAllowed: child.agentRejectAllowed ?? false,
+      displayOrder: child.displayOrder ?? displayOrder,
+      isActive: child.isActive ?? true,
+      parentOptionId,
+      issueGroupId,
+      showChildOptions: false,
+      childPrompt: null,
+      requireChildSelection: false,
+      minChildSelections: 0,
+      maxChildSelections: null,
+      childSelectionMode: 'MULTI',
+    };
+
+    let saved: any;
+
+    if (child.id) {
+      const current = await tx.questionnaireOption.findFirst({
+        where: { id: Number(child.id), itemId, parentOptionId },
+      });
+      if (!current) {
+        throw new BadRequestException(`Issue ${child.id} does not belong to this branch`);
+      }
+      saved = await tx.questionnaireOption.update({
+        where: { id: Number(child.id) },
+        data,
+      });
+    } else {
+      saved = await tx.questionnaireOption.create({
+        data: { ...data, itemId },
+      });
+    }
+
+    seenOptionIds.push(saved.id);
+    await this.syncCapabilities(tx, saved.id, child.capabilityIds ?? []);
+    return saved;
+  }
+
+  private async syncIssueGroups(
+    tx: any,
+    itemId: number,
+    parentOptionId: number,
+    groups: IssueGroupInput[],
+    seenOptionIds: number[],
+  ) {
+    const seenGroupIds: number[] = [];
+
+    for (let gi = 0; gi < groups.length; gi++) {
+      const group = groups[gi];
+      if (!group.name?.trim()) {
+        throw new BadRequestException('Issue group heading is required');
+      }
+
+      let savedGroup: any;
+      if (group.id) {
+        const current = await tx.questionnaireIssueGroup.findFirst({
+          where: { id: Number(group.id), parentOptionId },
+        });
+        if (!current) {
+          throw new BadRequestException(`Issue group ${group.id} is invalid`);
+        }
+        savedGroup = await tx.questionnaireIssueGroup.update({
+          where: { id: Number(group.id) },
+          data: {
+            name: group.name.trim(),
+            displayOrder: group.displayOrder ?? gi + 1,
+            isActive: group.isActive ?? true,
+          },
+        });
+      } else {
+        const sameName = await tx.questionnaireIssueGroup.findFirst({
+          where: {
+            parentOptionId,
+            name: { equals: group.name.trim(), mode: 'insensitive' },
+          },
+        });
+
+        if (sameName) {
+          savedGroup = await tx.questionnaireIssueGroup.update({
+            where: { id: sameName.id },
+            data: {
+              displayOrder: group.displayOrder ?? gi + 1,
+              isActive: group.isActive ?? true,
+            },
+          });
+        } else {
+          savedGroup = await tx.questionnaireIssueGroup.create({
+            data: {
+              name: group.name.trim(),
+              displayOrder: group.displayOrder ?? gi + 1,
+              isActive: group.isActive ?? true,
+              parentOptionId,
+            },
+          });
+        }
+      }
+
+      seenGroupIds.push(savedGroup.id);
+
+      const children = group.childOptions || [];
+      for (let ci = 0; ci < children.length; ci++) {
+        await this.saveChild(
+          tx,
+          itemId,
+          parentOptionId,
+          savedGroup.id,
+          children[ci],
+          ci + 1,
+          seenOptionIds,
+        );
+      }
+    }
+
+    // Remove obsolete groups only after detaching their child issues.
+    const obsolete = await tx.questionnaireIssueGroup.findMany({
+      where: {
+        parentOptionId,
+        ...(seenGroupIds.length ? { id: { notIn: seenGroupIds } } : {}),
+      },
+      select: { id: true },
+    });
+
+    const obsoleteIds = obsolete.map((x: any) => x.id);
+    if (obsoleteIds.length) {
+      await tx.questionnaireOption.updateMany({
+        where: { issueGroupId: { in: obsoleteIds } },
+        data: { issueGroupId: null, isActive: false },
+      });
+      await tx.questionnaireIssueGroup.deleteMany({
+        where: { id: { in: obsoleteIds } },
+      });
+    }
+  }
+
+  private async syncMainOption(
+    tx: any,
+    itemId: number,
+    option: BranchOptionInput,
+    displayOrder: number,
+    seenOptionIds: number[],
+  ) {
+    if (!option.label?.trim()) {
+      throw new BadRequestException('Main answer label is required');
+    }
+
+    const deductionType = option.deductionType ?? 'PERCENTAGE';
+    const deductionValue = this.number(option.deductionValue, 0);
+    const deductionTrigger = option.deductionTrigger ?? 'SELECTED';
+    this.validateDeduction(deductionType, deductionValue);
+    this.validateBranch(option);
+
+    const value = await this.uniqueValue(
+      tx,
+      itemId,
+      option.value || option.label,
+      option.id,
+    );
+
+    const hasGroups = (option.issueGroups || []).length > 0;
+    const hasFlatChildren = (option.childOptions || []).length > 0;
+    const showChildOptions =
+      option.showChildOptions ?? (hasGroups || hasFlatChildren);
+
+    const data: any = {
+      label: option.label.trim(),
+      value,
+      issueCode: option.issueCode ? this.normalize(option.issueCode) : null,
+      deductionPercent: deductionType === 'PERCENTAGE' ? deductionValue : 0,
+      deductionType,
+      deductionValue,
+      deductionTrigger,
+      applicabilityScope: option.applicabilityScope ?? 'GLOBAL',
+      applicabilityTargetId: option.applicabilityScope && option.applicabilityScope !== 'GLOBAL' ? Number(option.applicabilityTargetId) : null,
+      severity: option.severity ?? 'NORMAL',
+      agentRejectAllowed: option.agentRejectAllowed ?? false,
+      displayOrder: option.displayOrder ?? displayOrder,
+      isActive: option.isActive ?? true,
+      parentOptionId: null,
+      issueGroupId: null,
+      showChildOptions,
+      childPrompt: option.childPrompt?.trim() || null,
+      requireChildSelection: option.requireChildSelection ?? false,
+      minChildSelections: this.number(option.minChildSelections, 0),
+      maxChildSelections: option.maxChildSelections ?? null,
+      childSelectionMode: option.childSelectionMode ?? 'MULTI',
+    };
+
+    let saved: any;
+    if (option.id) {
+      const current = await tx.questionnaireOption.findFirst({
+        where: { id: Number(option.id), itemId, parentOptionId: null },
+      });
+      if (!current) {
+        throw new BadRequestException(`Main answer ${option.id} is invalid`);
+      }
+      saved = await tx.questionnaireOption.update({
+        where: { id: Number(option.id) },
+        data,
+      });
+    } else {
+      saved = await tx.questionnaireOption.create({
+        data: { ...data, itemId },
+      });
+    }
+
+    seenOptionIds.push(saved.id);
+    await this.syncCapabilities(tx, saved.id, option.capabilityIds ?? []);
+
+    if (showChildOptions) {
+      if (hasGroups) {
+        await this.syncIssueGroups(
+          tx,
+          itemId,
+          saved.id,
+          option.issueGroups || [],
+          seenOptionIds,
+        );
+
+        // Any old flat children should be hidden unless re-used inside a group.
+        await tx.questionnaireOption.updateMany({
+          where: {
+            itemId,
+            parentOptionId: saved.id,
+            issueGroupId: null,
+            ...(seenOptionIds.length ? { id: { notIn: seenOptionIds } } : {}),
+          },
+          data: { isActive: false },
+        });
+      } else {
+        // Legacy/simple branch support.
+        await tx.questionnaireIssueGroup.deleteMany({
+          where: { parentOptionId: saved.id },
+        });
+
+        const children = option.childOptions || [];
+        for (let i = 0; i < children.length; i++) {
+          await this.saveChild(
+            tx,
+            itemId,
+            saved.id,
+            null,
+            children[i],
+            i + 1,
+            seenOptionIds,
+          );
+        }
+      }
+    } else {
+      await tx.questionnaireOption.updateMany({
+        where: { itemId, parentOptionId: saved.id },
+        data: { isActive: false },
+      });
+      await tx.questionnaireIssueGroup.deleteMany({
+        where: { parentOptionId: saved.id },
+      });
+    }
+
+    return saved;
+  }
+
+  private builderInclude() {
+    return {
+      section: true,
+      category: true,
+      audiences: { include: { audience: true } },
+      productMappings: {
+        include: {
+          product: {
+            include: { brand: true, category: true, series: true },
+          },
+        },
+      },
+      options: {
+        where: { parentOptionId: null },
+        orderBy: { displayOrder: 'asc' },
+        include: {
+          capabilities: { include: { capability: true } },
+          issueGroups: {
+            orderBy: { displayOrder: 'asc' },
+            include: {
+              childOptions: {
+                orderBy: { displayOrder: 'asc' },
+                include: {
+                  capabilities: { include: { capability: true } },
+                },
+              },
+            },
+          },
+          childOptions: {
+            orderBy: { displayOrder: 'asc' },
+            include: {
+              capabilities: { include: { capability: true } },
+            },
+          },
+        },
+      },
+    } as any;
+  }
+
+  async getBuilderQuestions() {
+    return this.prisma.questionnaireItem.findMany({
+      include: this.builderInclude(),
+      orderBy: [
+        { section: { displayOrder: 'asc' } },
+        { displayOrder: 'asc' },
+        { id: 'asc' },
+      ],
+    });
+  }
+
+  async getBuilderQuestion(id: number) {
+    const question = await this.prisma.questionnaireItem.findUnique({
+      where: { id },
+      include: this.builderInclude(),
+    });
+
+    if (!question) throw new NotFoundException('Question does not exist');
+    return question;
+  }
+
+  async createQuestion(data: QuestionInput) {
+    await this.validateMasterData(data);
+
+    const code = this.normalize(data.code || `${data.name}_${Date.now()}`);
+    const duplicate = await this.prisma.questionnaireItem.findUnique({
+      where: { code },
+    });
+    if (duplicate) throw new BadRequestException('Question code already exists');
+
+    const created = await this.prisma.$transaction(async (tx: any) => {
+      const item = await tx.questionnaireItem.create({
+        data: {
+          code,
+          name: data.name.trim(),
+          questionText: data.questionText.trim(),
+          answerType: data.answerType,
+          sectionId: Number(data.sectionId),
+          categoryId: data.categoryId ? Number(data.categoryId) : null,
+          displayOrder: this.number(data.displayOrder, 0),
+          isRequired: data.isRequired ?? true,
+          isActive: data.isActive ?? true,
+          applyToAllProducts: data.applyToAllProducts ?? true,
+        },
+      });
+
+      await tx.questionnaireItemAudience.createMany({
+        data: [...new Set(data.audienceIds.map(Number))].map((audienceId) => ({
+          itemId: item.id,
+          audienceId,
+        })),
+        skipDuplicates: true,
+      });
+
+      if (data.applyToAllProducts === false && data.productIds?.length) {
+        await tx.questionnaireItemProduct.createMany({
+          data: [...new Set(data.productIds.map(Number))].map((productId) => ({
+            itemId: item.id,
+            productId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      const seenOptionIds: number[] = [];
+      for (let i = 0; i < data.options.length; i++) {
+        await this.syncMainOption(
+          tx,
+          item.id,
+          data.options[i],
+          i + 1,
+          seenOptionIds,
+        );
+      }
+
+      return item;
+    });
+
+    return this.getBuilderQuestion(created.id);
+  }
+
+  async updateQuestion(id: number, data: QuestionInput) {
+    await this.getBuilderQuestion(id);
+    await this.validateMasterData(data, id);
+
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.questionnaireItem.update({
+        where: { id },
+        data: {
+          name: data.name.trim(),
+          questionText: data.questionText.trim(),
+          answerType: data.answerType,
+          sectionId: Number(data.sectionId),
+          categoryId: data.categoryId ? Number(data.categoryId) : null,
+          displayOrder: this.number(data.displayOrder, 0),
+          isRequired: data.isRequired ?? true,
+          isActive: data.isActive ?? true,
+          applyToAllProducts: data.applyToAllProducts ?? true,
+        },
+      });
+
+      await tx.questionnaireItemAudience.deleteMany({ where: { itemId: id } });
+      await tx.questionnaireItemAudience.createMany({
+        data: [...new Set(data.audienceIds.map(Number))].map((audienceId) => ({
+          itemId: id,
+          audienceId,
+        })),
+        skipDuplicates: true,
+      });
+
+      await tx.questionnaireItemProduct.deleteMany({ where: { itemId: id } });
+      if (data.applyToAllProducts === false && data.productIds?.length) {
+        await tx.questionnaireItemProduct.createMany({
+          data: [...new Set(data.productIds.map(Number))].map((productId) => ({
+            itemId: id,
+            productId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      const seenOptionIds: number[] = [];
+      for (let i = 0; i < data.options.length; i++) {
+        await this.syncMainOption(
+          tx,
+          id,
+          data.options[i],
+          i + 1,
+          seenOptionIds,
+        );
+      }
+
+      await tx.questionnaireOption.updateMany({
+        where: {
+          itemId: id,
+          ...(seenOptionIds.length ? { id: { notIn: seenOptionIds } } : {}),
+        },
+        data: { isActive: false },
+      });
+    });
+
+    return this.getBuilderQuestion(id);
+  }
+
+  async setStatus(id: number, isActive: boolean) {
+    await this.getBuilderQuestion(id);
+    return this.prisma.questionnaireItem.update({
+      where: { id },
+      data: { isActive },
+    });
+  }
+
+  async deleteQuestion(id: number) {
+    await this.getBuilderQuestion(id);
+    await this.prisma.questionnaireItem.delete({ where: { id } });
+    return { deleted: true, id };
+  }
+
+  async createSection(body: any) {
+    const name = String(body?.name || '').trim();
+    if (!name) throw new BadRequestException('Section name is required');
+
+    const code = this.normalize(body?.code || name);
+    const existing = await this.prisma.questionnaireSection.findFirst({
+      where: {
+        OR: [
+          { code },
+          { name: { equals: name, mode: 'insensitive' } },
+        ],
+      },
+    });
+
+    if (existing) {
+      throw new BadRequestException('Questionnaire section already exists');
+    }
+
+    return this.prisma.questionnaireSection.create({
+      data: {
+        code,
+        name,
+        displayOrder: this.number(body?.displayOrder, 0),
+        isActive: body?.isActive ?? true,
+        calculationMode: body?.calculationMode || 'SUM',
+      },
+    });
+  }
+
+  private optionApplicable(option: any, context: {
+    categoryId: number;
+    brandId: number;
+    seriesId: number | null;
+    productId: number;
+    variantId?: number | null;
+  }) {
+    const scope = option.applicabilityScope || 'GLOBAL';
+    const target = option.applicabilityTargetId == null
+      ? null
+      : Number(option.applicabilityTargetId);
+
+    if (scope === 'GLOBAL') return true;
+    if (target === null) return false;
+    if (scope === 'CATEGORY') return target === context.categoryId;
+    if (scope === 'BRAND') return target === context.brandId;
+    if (scope === 'SERIES') return context.seriesId !== null && target === context.seriesId;
+    if (scope === 'PRODUCT') return target === context.productId;
+    if (scope === 'VARIANT') return context.variantId != null && target === context.variantId;
+    return false;
+  }
+
+  async updateOptionPolicy(optionId: number, body: any) {
+    const optionRecord = await this.prisma.questionnaireOption.findUnique({
+      where: { id: Number(optionId) },
+    });
+    if (!optionRecord) throw new NotFoundException('Question option does not exist');
+    const option: any = optionRecord;
+
+    const scope = String(body?.applicabilityScope || option.applicabilityScope || 'GLOBAL').toUpperCase();
+    const validScopes = ['GLOBAL', 'CATEGORY', 'BRAND', 'SERIES', 'PRODUCT', 'VARIANT'];
+    if (!validScopes.includes(scope)) {
+      throw new BadRequestException('Invalid applicability scope');
+    }
+
+    const targetId = scope === 'GLOBAL'
+      ? null
+      : Number(body?.applicabilityTargetId);
+    if (scope !== 'GLOBAL' && (targetId === null || !Number.isInteger(targetId) || targetId <= 0)) {
+      throw new BadRequestException('Applicability target is required');
+    }
+
+    const trigger = String(body?.deductionTrigger || option.deductionTrigger || 'SELECTED').toUpperCase();
+    if (!['SELECTED', 'MISSING'].includes(trigger)) {
+      throw new BadRequestException('Invalid deduction trigger');
+    }
+
+    const severity = String(body?.severity || option.severity || 'NORMAL').toUpperCase();
+    if (!['NORMAL', 'SEVERE'].includes(severity)) {
+      throw new BadRequestException('Invalid issue severity');
+    }
+
+    return this.prisma.questionnaireOption.update({
+      where: { id: Number(optionId) },
+      data: {
+        applicabilityScope: scope as any,
+        applicabilityTargetId: targetId,
+        deductionTrigger: trigger as any,
+        severity: severity as any,
+        agentRejectAllowed: Boolean(body?.agentRejectAllowed),
+        issueCode: body?.issueCode === undefined
+          ? option.issueCode
+          : (body.issueCode ? this.normalize(String(body.issueCode)) : null),
+      },
+    });
+  }
+
+  private capabilityAllowed(option: any, productCapabilityIds: Set<number>) {
+    const required = (option.capabilities ?? []).map(
+      (x: any) => x.capabilityId ?? x.capability?.id,
+    );
+    if (!required.length) return true;
+    return required.some((id: number) => productCapabilityIds.has(id));
+  }
+
+
+  async getDeductionRules(optionId: number) {
+    const option = await this.prisma.questionnaireOption.findUnique({
+      where: { id: Number(optionId) },
+      select: { id: true },
+    });
+    if (!option) throw new NotFoundException('Question option does not exist');
+
+    return this.prisma.questionnaireDeductionRule.findMany({
+      where: { optionId: Number(optionId) },
+      orderBy: [{ priority: 'desc' }, { id: 'desc' }],
+    });
+  }
+
+  async upsertScopedDeductionRule(body: any) {
+    const optionId = Number(body?.optionId);
+    const scope = String(body?.scope || 'PRODUCT').toUpperCase();
+    const targetId = scope === 'GLOBAL' ? null : Number(body?.targetId);
+    const deductionType = String(body?.deductionType || 'PERCENTAGE').toUpperCase();
+    const deductionValue = Number(body?.deductionValue ?? 0);
+    const priority = Number.isFinite(Number(body?.priority)) ? Number(body.priority) : 100;
+
+    if (!Number.isInteger(optionId) || optionId <= 0) {
+      throw new BadRequestException('Valid optionId is required');
+    }
+    if (!['GLOBAL','CATEGORY','BRAND','SERIES','PRODUCT','VARIANT'].includes(scope)) {
+      throw new BadRequestException('Invalid rule scope');
+    }
+    if (scope !== 'GLOBAL' && (targetId === null || !Number.isInteger(targetId) || targetId <= 0)) {
+      throw new BadRequestException('Valid targetId is required for selected scope');
+    }
+    if (!['PERCENTAGE','FIXED'].includes(deductionType)) {
+      throw new BadRequestException('Invalid deduction type');
+    }
+    this.validateDeduction(deductionType as DeductionType, deductionValue);
+
+    const option = await this.prisma.questionnaireOption.findUnique({ where: { id: optionId } });
+    if (!option) throw new NotFoundException('Question option does not exist');
+
+    const where: any = { optionId, scope: scope as any };
+    const dataTarget: any = {
+      categoryId: null, brandId: null, seriesId: null, productId: null, variantId: null,
+    };
+    if (scope === 'CATEGORY') dataTarget.categoryId = targetId;
+    if (scope === 'BRAND') dataTarget.brandId = targetId;
+    if (scope === 'SERIES') dataTarget.seriesId = targetId;
+    if (scope === 'PRODUCT') dataTarget.productId = targetId;
+    if (scope === 'VARIANT') dataTarget.variantId = targetId;
+    Object.assign(where, dataTarget);
+
+    const existing = await this.prisma.questionnaireDeductionRule.findFirst({ where });
+    const data: any = {
+      scope: scope as any,
+      ...dataTarget,
+      deductionType: deductionType as any,
+      deductionValue,
+      deductionPercent: deductionType === 'PERCENTAGE' ? deductionValue : null,
+      priority,
+      isActive: true,
+    };
+
+    return existing
+      ? this.prisma.questionnaireDeductionRule.update({ where: { id: existing.id }, data })
+      : this.prisma.questionnaireDeductionRule.create({ data: { optionId, ...data } });
+  }
+
+  async getQuotePolicy(productId?: number | null) {
+    const global = await this.prisma.questionnaireQuotePolicy.findUnique({
+      where: { key: 'GLOBAL' },
+    });
+    let product = null;
+    if (productId) {
+      product = await this.prisma.questionnaireQuotePolicy.findUnique({
+        where: { key: `PRODUCT:${Number(productId)}` },
+      });
+    }
+    const effective = product?.isActive ? product : global?.isActive ? global : null;
+    return {
+      global,
+      product,
+      effective: effective || {
+        key: 'DEFAULT',
+        scope: 'GLOBAL',
+        productId: null,
+        normalMinQuotePercent: 10,
+        severeMinQuotePercent: 2,
+        normalMinQuoteType: 'PERCENTAGE',
+        normalMinQuoteValue: 10,
+        severeMinQuoteType: 'PERCENTAGE',
+        severeMinQuoteValue: 2,
+        isActive: true,
+      },
+    };
+  }
+
+  async saveQuotePolicy(body: any) {
+    const scope = String(body?.scope || 'GLOBAL').toUpperCase();
+    const productId = scope === 'PRODUCT' ? Number(body?.productId) : null;
+
+    if (!['GLOBAL', 'PRODUCT'].includes(scope)) {
+      throw new BadRequestException('Quote policy scope must be GLOBAL or PRODUCT');
+    }
+    if (scope === 'PRODUCT' && (productId == null || !Number.isInteger(productId) || productId <= 0)) {
+      throw new BadRequestException('Valid productId is required');
+    }
+
+    const normalType = String(body?.normalMinQuoteType || 'PERCENTAGE').toUpperCase();
+    const severeType = String(body?.severeMinQuoteType || 'PERCENTAGE').toUpperCase();
+    const normalValue = Number(
+      body?.normalMinQuoteValue ?? body?.normalMinQuotePercent ?? 10,
+    );
+    const severeValue = Number(
+      body?.severeMinQuoteValue ?? body?.severeMinQuotePercent ?? 2,
+    );
+
+    const validateFloor = (label: string, type: string, value: number) => {
+      if (!['PERCENTAGE', 'FIXED'].includes(type)) {
+        throw new BadRequestException(`${label} type must be PERCENTAGE or FIXED`);
+      }
+      if (!Number.isFinite(value) || value < 0) {
+        throw new BadRequestException(`${label} value must be 0 or greater`);
+      }
+      if (type === 'PERCENTAGE' && value > 100) {
+        throw new BadRequestException(`${label} percentage must be between 0 and 100`);
+      }
+    };
+
+    validateFloor('Normal minimum quote', normalType, normalValue);
+    validateFloor('Severe minimum quote', severeType, severeValue);
+
+    if (scope === 'PRODUCT') {
+      const product = await this.prisma.product.findUnique({ where: { id: productId! } });
+      if (!product) throw new NotFoundException('Selected product does not exist');
+    }
+
+    const key = scope === 'GLOBAL' ? 'GLOBAL' : `PRODUCT:${productId}`;
+    const data: any = {
+      productId,
+      normalMinQuoteType: normalType,
+      normalMinQuoteValue: normalValue,
+      severeMinQuoteType: severeType,
+      severeMinQuoteValue: severeValue,
+      isActive: body?.isActive !== false,
+    };
+
+    // Keep legacy percent columns synchronized whenever the new mode is percentage.
+    if (normalType === 'PERCENTAGE') data.normalMinQuotePercent = normalValue;
+    if (severeType === 'PERCENTAGE') data.severeMinQuotePercent = severeValue;
+
+    return this.prisma.questionnaireQuotePolicy.upsert({
+      where: { key },
+      create: {
+        key,
+        scope: scope as any,
+        normalMinQuotePercent: normalType === 'PERCENTAGE' ? normalValue : 10,
+        severeMinQuotePercent: severeType === 'PERCENTAGE' ? severeValue : 2,
+        ...data,
+      },
+      update: data,
+    });
+  }
+
+  async getEffectiveQuestionnaire(productId: number, audienceCode = 'CUSTOMER', variantId?: number | null) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: Number(productId) },
+      include: {
+        category: true,
+        brand: true,
+        series: true,
+        capabilities: { include: { capability: true } },
+      },
+    });
+
+    if (!product || !product.isActive) {
+      throw new NotFoundException('Product does not exist or is inactive');
+    }
+
+    let effectiveVariantId: number | null = null;
+    if (variantId != null) {
+      const variant = await this.prisma.productVariant.findUnique({
+        where: { id: Number(variantId) },
+        select: { id: true, productId: true, isActive: true },
+      });
+      if (!variant || !variant.isActive || variant.productId !== product.id) {
+        throw new BadRequestException('Variant does not belong to selected product');
+      }
+      effectiveVariantId = variant.id;
+    }
+
+    const applicabilityContext = {
+      categoryId: product.categoryId,
+      brandId: product.brandId,
+      seriesId: product.seriesId,
+      productId: product.id,
+      variantId: effectiveVariantId,
+    };
+
+    const audience = await this.prisma.questionnaireAudience.findUnique({
+      where: { code: audienceCode.trim().toUpperCase() },
+    });
+
+    if (!audience || !audience.isActive) {
+      throw new BadRequestException('Invalid questionnaire audience');
+    }
+
+    const questions = await this.prisma.questionnaireItem.findMany({
+      where: {
+        isActive: true,
+        section: { isActive: true },
+        OR: [{ categoryId: null }, { categoryId: product.categoryId }],
+        audiences: { some: { audienceId: audience.id } },
+        AND: [
+          {
+            OR: [
+              { applyToAllProducts: true },
+              { productMappings: { some: { productId: product.id } } },
+            ],
+          },
+        ],
+      },
+      include: {
+        section: true,
+        productMappings: true,
+        options: {
+          where: { isActive: true, parentOptionId: null },
+          orderBy: { displayOrder: 'asc' },
+          include: {
+            capabilities: { include: { capability: true } },
+            issueGroups: {
+              where: { isActive: true },
+              orderBy: { displayOrder: 'asc' },
+              include: {
+                childOptions: {
+                  where: { isActive: true },
+                  orderBy: { displayOrder: 'asc' },
+                  include: {
+                    capabilities: { include: { capability: true } },
+                  },
+                },
+              },
+            },
+            childOptions: {
+              where: { isActive: true },
+              orderBy: { displayOrder: 'asc' },
+              include: {
+                capabilities: { include: { capability: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        { section: { displayOrder: 'asc' } },
+        { displayOrder: 'asc' },
+        { id: 'asc' },
+      ],
+    });
+
+    const productCapabilityIds = new Set<number>(
+      product.capabilities.map((x: any) => x.capabilityId),
+    );
+
+    // Safety net for old data: if the same logical question exists globally and
+    // specifically for this model, return only one. Product-specific wins.
+    const questionMap = new Map<string, any>();
+    for (const question of questions as any[]) {
+      const key = `${question.sectionId}:${this.normalizedText(question.questionText)}`;
+      const previous = questionMap.get(key);
+      if (!previous) {
+        questionMap.set(key, question);
+        continue;
+      }
+      if (previous.applyToAllProducts && !question.applyToAllProducts) {
+        questionMap.set(key, question);
+      }
+    }
+    const effectiveQuestions = [...questionMap.values()].sort((a: any, b: any) =>
+      (a.section.displayOrder - b.section.displayOrder) ||
+      (a.displayOrder - b.displayOrder) ||
+      (a.id - b.id),
+    );
+
+    return {
+      product: {
+        id: product.id,
+        name: product.name,
+        category: product.category,
+        brand: product.brand,
+        series: product.series,
+      },
+      audience: audience.code,
+      questions: effectiveQuestions.map((question: any) => ({
+        id: question.id,
+        code: question.code,
+        name: question.name,
+        questionText: question.questionText,
+        answerType: question.answerType,
+        isRequired: question.isRequired,
+        displayOrder: question.displayOrder,
+        section: question.section,
+        options: question.options
+          .filter((option: any) =>
+            this.capabilityAllowed(option, productCapabilityIds) &&
+            this.optionApplicable(option, applicabilityContext),
+          )
+          .map((option: any) => {
+            const groups = (option.issueGroups || [])
+              .map((group: any) => ({
+                id: group.id,
+                name: group.name,
+                displayOrder: group.displayOrder,
+                childOptions: (group.childOptions || [])
+                  .filter((child: any) =>
+                    this.capabilityAllowed(child, productCapabilityIds) &&
+                    this.optionApplicable(child, applicabilityContext),
+                  )
+                  .map((child: any) => ({
+                    id: child.id,
+                    label: child.label,
+                    value: child.value,
+                    issueCode: child.issueCode,
+                    severity: child.severity,
+                    agentRejectAllowed: child.agentRejectAllowed,
+                  })),
+              }))
+              .filter((group: any) => group.childOptions.length > 0);
+
+            const groupedChildIds = new Set(
+              groups.flatMap((g: any) => g.childOptions.map((c: any) => c.id)),
+            );
+
+            const flatChildren = (option.childOptions || [])
+              .filter((child: any) => !groupedChildIds.has(child.id))
+              .filter((child: any) =>
+                this.capabilityAllowed(child, productCapabilityIds) &&
+                    this.optionApplicable(child, applicabilityContext),
+              )
+              .map((child: any) => ({
+                id: child.id,
+                label: child.label,
+                value: child.value,
+                issueCode: child.issueCode,
+                severity: child.severity,
+                agentRejectAllowed: child.agentRejectAllowed,
+              }));
+
+            return {
+              id: option.id,
+              label: option.label,
+              value: option.value,
+              issueCode: option.issueCode,
+              severity: option.severity,
+              agentRejectAllowed: option.agentRejectAllowed,
+              showChildOptions: option.showChildOptions,
+              childPrompt: option.childPrompt,
+              requireChildSelection: option.requireChildSelection,
+              minChildSelections: option.minChildSelections,
+              maxChildSelections: option.maxChildSelections,
+              childSelectionMode: option.childSelectionMode,
+              issueGroups: groups,
+              childOptions: flatChildren,
+            };
+          }),
+      })),
+    };
+  }
+
+  async getAggregationPolicies(productId?: number | null) {
+    const effectiveProductId = productId == null ? null : Number(productId);
+    if (
+      effectiveProductId != null &&
+      (!Number.isInteger(effectiveProductId) || effectiveProductId <= 0)
+    ) {
+      throw new BadRequestException('Invalid productId');
+    }
+
+    const policies = await this.prisma.questionnaireAggregationPolicy.findMany({
+      where: effectiveProductId
+        ? {
+            level: 'SECTION',
+            OR: [
+              { scope: 'GLOBAL' },
+              { scope: 'PRODUCT', productId: effectiveProductId },
+            ],
+          }
+        : { level: 'SECTION', scope: 'GLOBAL' },
+      orderBy: [
+        { level: 'asc' },
+        { targetId: 'asc' },
+        { scope: 'asc' },
+        { id: 'asc' },
+      ],
+    });
+
+    return policies;
+  }
+
+  async saveAggregationPolicy(body: any) {
+    const level = String(body?.level || '').trim().toUpperCase();
+    const targetId = Number(body?.targetId);
+    const scope = String(body?.scope || 'GLOBAL').trim().toUpperCase();
+    const productId = scope === 'PRODUCT' ? Number(body?.productId) : null;
+    const calculationMode = String(body?.calculationMode || '').trim().toUpperCase();
+    const rawCapType = body?.capType == null || body?.capType === ''
+      ? null
+      : String(body.capType).trim().toUpperCase();
+    const capValue = rawCapType ? Number(body?.capValue) : null;
+
+    if (level !== 'SECTION') {
+      throw new BadRequestException('Only SECTION-level aggregation policy is supported');
+    }
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      throw new BadRequestException('Valid targetId is required');
+    }
+    if (!['GLOBAL', 'PRODUCT'].includes(scope)) {
+      throw new BadRequestException('scope must be GLOBAL or PRODUCT');
+    }
+    if (
+      scope === 'PRODUCT' &&
+      (productId == null || !Number.isInteger(productId) || productId <= 0)
+    ) {
+      throw new BadRequestException('Valid productId is required for PRODUCT scope');
+    }
+    if (!['MAX', 'SUM', 'SINGLE'].includes(calculationMode)) {
+      throw new BadRequestException('calculationMode must be MAX, SUM or SINGLE');
+    }
+    if (rawCapType && !['PERCENTAGE', 'FIXED'].includes(rawCapType)) {
+      throw new BadRequestException('capType must be PERCENTAGE, FIXED or empty');
+    }
+    if (rawCapType) {
+      if (!Number.isFinite(capValue) || Number(capValue) < 0) {
+        throw new BadRequestException('capValue must be 0 or greater');
+      }
+      if (rawCapType === 'PERCENTAGE' && Number(capValue) > 100) {
+        throw new BadRequestException('Percentage cap must be between 0 and 100');
+      }
+    }
+
+    const section = await this.prisma.questionnaireSection.findUnique({
+      where: { id: targetId },
+      select: { id: true },
+    });
+    if (!section) throw new NotFoundException('Questionnaire section does not exist');
+
+    if (scope === 'PRODUCT') {
+      const product = await this.prisma.product.findUnique({
+        where: { id: productId! },
+        select: { id: true },
+      });
+      if (!product) throw new NotFoundException('Selected product does not exist');
+    }
+
+    const key = scope === 'GLOBAL'
+      ? `${level}:${targetId}:GLOBAL`
+      : `${level}:${targetId}:PRODUCT:${productId}`;
+
+    const data: any = {
+      level,
+      targetId,
+      scope: scope as any,
+      productId,
+      calculationMode: calculationMode as any,
+      capType: rawCapType as any,
+      capValue,
+      isActive: body?.isActive !== false,
+    };
+
+    return this.prisma.questionnaireAggregationPolicy.upsert({
+      where: { key },
+      create: { key, ...data },
+      update: data,
+    });
+  }
+
+  async deleteAggregationPolicy(
+    levelInput: string,
+    targetIdInput: number,
+    productIdInput?: number | null,
+  ) {
+    const level = String(levelInput || '').trim().toUpperCase();
+    const targetId = Number(targetIdInput);
+    const productId = productIdInput == null ? null : Number(productIdInput);
+
+    if (level !== 'SECTION') {
+      throw new BadRequestException('Only SECTION-level aggregation policy is supported');
+    }
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      throw new BadRequestException('Valid targetId is required');
+    }
+    if (
+      productId != null &&
+      (!Number.isInteger(productId) || productId <= 0)
+    ) {
+      throw new BadRequestException('Invalid productId');
+    }
+
+    const key = productId
+      ? `${level}:${targetId}:PRODUCT:${productId}`
+      : `${level}:${targetId}:GLOBAL`;
+
+    const existing = await this.prisma.questionnaireAggregationPolicy.findUnique({
+      where: { key },
+      select: { id: true },
+    });
+    if (!existing) return { success: true, deleted: false };
+
+    await this.prisma.questionnaireAggregationPolicy.delete({ where: { key } });
+    return { success: true, deleted: true };
+  }
+
+}
+
+============================================================
+FILE: .\src\questionnaire\questionnaire-deduction.service.ts
+============================================================
+
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+
+import { PrismaService } from '../prisma/prisma/prisma.service.js';
+
+type BulkDeductionPayload = {
+  itemId: number;
+  optionId: number;
+  productIds: number[];
+  deductionPercent: number;
+  updateExisting?: boolean;
+};
+
+type RuleScope =
+  | 'GLOBAL'
+  | 'CATEGORY'
+  | 'BRAND'
+  | 'SERIES'
+  | 'PRODUCT'
+  | 'VARIANT';
+
+type DeductionType = 'PERCENTAGE' | 'FIXED';
+
+type ScopedRulePayload = {
+  itemId: number;
+  optionId: number;
+  scope: RuleScope;
+  targetId?: number | null;
+  deductionType: DeductionType;
+  deductionValue: number;
+  priority?: number;
+};
+
+@Injectable()
+export class QuestionnaireDeductionService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async getRules(itemId?: number, optionId?: number) {
+    return this.prisma.questionnaireDeductionRule.findMany({
+      where: {
+        isActive: true,
+        ...(optionId ? { optionId } : {}),
+        ...(itemId ? { option: { itemId } } : {}),
+      },
+      include: {
+        option: {
+          include: {
+            item: {
+              include: {
+                section: true,
+              },
+            },
+          },
+        },
+        category: true,
+        brand: true,
+        series: true,
+        product: {
+          include: {
+            brand: true,
+            category: true,
+            series: true,
+          },
+        },
+        variant: {
+          include: {
+            product: true,
+            values: {
+              include: {
+                attribute: true,
+                option: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        { priority: 'desc' },
+        { updatedAt: 'desc' },
+      ],
+    });
+  }
+
+  async createOrUpdateScopedRule(data: ScopedRulePayload) {
+    const itemId = Number(data.itemId);
+    const optionId = Number(data.optionId);
+    const scope = data.scope;
+    const deductionType = data.deductionType;
+    const deductionValue = Number(data.deductionValue);
+    const priority = Number(data.priority ?? 0);
+
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      throw new BadRequestException('Invalid questionnaire item');
+    }
+
+    if (!Number.isInteger(optionId) || optionId <= 0) {
+      throw new BadRequestException('Invalid questionnaire option');
+    }
+
+    if (
+      !['GLOBAL', 'CATEGORY', 'BRAND', 'SERIES', 'PRODUCT', 'VARIANT'].includes(
+        scope,
+      )
+    ) {
+      throw new BadRequestException('Invalid deduction rule scope');
+    }
+
+    if (!['PERCENTAGE', 'FIXED'].includes(deductionType)) {
+      throw new BadRequestException('Invalid deduction type');
+    }
+
+    if (!Number.isFinite(deductionValue) || deductionValue < 0) {
+      throw new BadRequestException(
+        'Deduction value must be zero or greater',
+      );
+    }
+
+    if (deductionType === 'PERCENTAGE' && deductionValue > 100) {
+      throw new BadRequestException(
+        'Percentage deduction must be between 0 and 100',
+      );
+    }
+
+    if (!Number.isInteger(priority) || priority < 0 || priority > 1000) {
+      throw new BadRequestException('Priority must be between 0 and 1000');
+    }
+
+    const option = await this.prisma.questionnaireOption.findUnique({
+      where: { id: optionId },
+      include: {
+        item: {
+          include: {
+            productMappings: true,
+          },
+        },
+      },
+    });
+
+    if (!option) {
+      throw new NotFoundException('Questionnaire option not found');
+    }
+
+    if (option.itemId !== itemId) {
+      throw new BadRequestException(
+        'Selected option does not belong to the selected questionnaire item',
+      );
+    }
+
+    if (!option.isActive || !option.item.isActive) {
+      throw new BadRequestException(
+        'Inactive questionnaire item or option cannot receive rules',
+      );
+    }
+
+    const targetId =
+      scope === 'GLOBAL'
+        ? null
+        : Number(data.targetId);
+
+    if (scope !== 'GLOBAL') {
+      if (!Number.isInteger(targetId) || Number(targetId) <= 0) {
+        throw new BadRequestException(
+          `A valid target is required for ${scope} scope`,
+        );
+      }
+    }
+
+    const targetData = await this.validateScopeTarget(
+      scope,
+      targetId,
+      option.item.applyToAllProducts,
+      option.item.productMappings.map((m) => m.productId),
+    );
+
+    const where = this.ruleWhere(optionId, scope, targetId);
+
+    const existing =
+      await this.prisma.questionnaireDeductionRule.findFirst({
+        where,
+      });
+
+    const legacyPercent =
+      deductionType === 'PERCENTAGE' ? deductionValue : 0;
+
+    if (existing) {
+      return this.prisma.questionnaireDeductionRule.update({
+        where: { id: existing.id },
+        data: {
+          ...targetData,
+          scope,
+          deductionType,
+          deductionValue,
+          deductionPercent: legacyPercent,
+          priority,
+          isActive: true,
+        },
+        include: {
+          category: true,
+          brand: true,
+          series: true,
+          product: true,
+          variant: true,
+          option: true,
+        },
+      });
+    }
+
+    return this.prisma.questionnaireDeductionRule.create({
+      data: {
+        optionId,
+        scope,
+        ...targetData,
+        deductionType,
+        deductionValue,
+        deductionPercent: legacyPercent,
+        priority,
+        isActive: true,
+      },
+      include: {
+        category: true,
+        brand: true,
+        series: true,
+        product: true,
+        variant: true,
+        option: true,
+      },
+    });
+  }
+
+  async bulkCreateOrUpdate(data: BulkDeductionPayload) {
+    const itemId = Number(data.itemId);
+    const optionId = Number(data.optionId);
+
+    const productIds = [
+      ...new Set(
+        (data.productIds || [])
+          .map(Number)
+          .filter((id) => Number.isInteger(id) && id > 0),
+      ),
+    ];
+
+    const deductionPercent = Number(data.deductionPercent);
+
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      throw new BadRequestException('Invalid questionnaire item');
+    }
+
+    if (!Number.isInteger(optionId) || optionId <= 0) {
+      throw new BadRequestException('Invalid questionnaire option');
+    }
+
+    if (!productIds.length) {
+      throw new BadRequestException(
+        'Please select at least one phone/model',
+      );
+    }
+
+    if (productIds.length > 500) {
+      throw new BadRequestException(
+        'Maximum 500 products can be updated in one request',
+      );
+    }
+
+    if (
+      !Number.isFinite(deductionPercent) ||
+      deductionPercent < 0 ||
+      deductionPercent > 100
+    ) {
+      throw new BadRequestException(
+        'Deduction percentage must be between 0 and 100',
+      );
+    }
+
+    const option = await this.prisma.questionnaireOption.findUnique({
+      where: { id: optionId },
+      include: {
+        item: {
+          include: {
+            productMappings: true,
+          },
+        },
+      },
+    });
+
+    if (!option) {
+      throw new NotFoundException('Questionnaire option not found');
+    }
+
+    if (!option.isActive || !option.item.isActive) {
+      throw new BadRequestException(
+        'Inactive questionnaire item or option cannot receive deduction rules',
+      );
+    }
+
+    if (option.itemId !== itemId) {
+      throw new BadRequestException(
+        'Selected option does not belong to the selected questionnaire item',
+      );
+    }
+
+    const products = await this.prisma.product.findMany({
+      where: {
+        id: { in: productIds },
+        isActive: true,
+      },
+      select: { id: true },
+    });
+
+    if (products.length !== productIds.length) {
+      throw new BadRequestException(
+        'One or more selected products do not exist or are inactive',
+      );
+    }
+
+    if (!option.item.applyToAllProducts) {
+      const allowedProductIds = new Set<number>(
+        option.item.productMappings.map((mapping) => mapping.productId),
+      );
+
+      if (productIds.some((id) => !allowedProductIds.has(id))) {
+        throw new BadRequestException(
+          'One or more selected products are not mapped to this questionnaire item',
+        );
+      }
+    }
+
+    const existingRules =
+      await this.prisma.questionnaireDeductionRule.findMany({
+        where: {
+          optionId,
+          scope: 'PRODUCT',
+          productId: { in: productIds },
+        },
+        select: {
+          id: true,
+          productId: true,
+        },
+      });
+
+    const existingProductIds = new Set<number>(
+      existingRules
+        .map((rule) => rule.productId)
+        .filter((productId): productId is number => productId !== null),
+    );
+
+    const newProductIds = productIds.filter(
+      (productId) => !existingProductIds.has(productId),
+    );
+
+    const existingIds = [...existingProductIds];
+    const operations = [];
+
+    if (newProductIds.length) {
+      operations.push(
+        this.prisma.questionnaireDeductionRule.createMany({
+          data: newProductIds.map((productId) => ({
+            optionId,
+            scope: 'PRODUCT' as const,
+            productId,
+            deductionPercent,
+            deductionType: 'PERCENTAGE' as const,
+            deductionValue: deductionPercent,
+            priority: 0,
+            isActive: true,
+          })),
+          skipDuplicates: true,
+        }),
+      );
+    }
+
+    if (data.updateExisting === true && existingIds.length) {
+      operations.push(
+        this.prisma.questionnaireDeductionRule.updateMany({
+          where: {
+            optionId,
+            scope: 'PRODUCT',
+            productId: { in: existingIds },
+          },
+          data: {
+            deductionPercent,
+            deductionType: 'PERCENTAGE',
+            deductionValue: deductionPercent,
+            isActive: true,
+          },
+        }),
+      );
+    }
+
+    if (operations.length) {
+      await this.prisma.$transaction(operations);
+    }
+
+    return {
+      selected: productIds.length,
+      created: newProductIds.length,
+      existing: existingIds.length,
+      updated: data.updateExisting === true ? existingIds.length : 0,
+      skipped: data.updateExisting === true ? 0 : existingIds.length,
+    };
+  }
+
+  async updateRule(id: number, deductionPercent: number) {
+    const ruleId = Number(id);
+    const percentage = Number(deductionPercent);
+
+    if (!Number.isInteger(ruleId) || ruleId <= 0) {
+      throw new BadRequestException('Invalid rule ID');
+    }
+
+    if (
+      !Number.isFinite(percentage) ||
+      percentage < 0 ||
+      percentage > 100
+    ) {
+      throw new BadRequestException(
+        'Deduction percentage must be between 0 and 100',
+      );
+    }
+
+    const existing =
+      await this.prisma.questionnaireDeductionRule.findUnique({
+        where: { id: ruleId },
+      });
+
+    if (!existing) {
+      throw new NotFoundException('Deduction rule not found');
+    }
+
+    return this.prisma.questionnaireDeductionRule.update({
+      where: { id: ruleId },
+      data: {
+        deductionPercent: percentage,
+        deductionType: 'PERCENTAGE',
+        deductionValue: percentage,
+      },
+    });
+  }
+
+  async removeRule(id: number) {
+    const ruleId = Number(id);
+
+    if (!Number.isInteger(ruleId) || ruleId <= 0) {
+      throw new BadRequestException('Invalid rule ID');
+    }
+
+    const existing =
+      await this.prisma.questionnaireDeductionRule.findUnique({
+        where: { id: ruleId },
+      });
+
+    if (!existing) {
+      throw new NotFoundException('Deduction rule not found');
+    }
+
+    return this.prisma.questionnaireDeductionRule.update({
+      where: { id: ruleId },
+      data: { isActive: false },
+    });
+  }
+
+  private ruleWhere(
+    optionId: number,
+    scope: RuleScope,
+    targetId: number | null,
+  ) {
+    if (scope === 'GLOBAL') {
+      return {
+        optionId,
+        scope,
+        categoryId: null,
+        brandId: null,
+        seriesId: null,
+        productId: null,
+        variantId: null,
+      };
+    }
+
+    const targetField = {
+      CATEGORY: 'categoryId',
+      BRAND: 'brandId',
+      SERIES: 'seriesId',
+      PRODUCT: 'productId',
+      VARIANT: 'variantId',
+    }[scope];
+
+    return {
+      optionId,
+      scope,
+      [targetField]: targetId,
+    };
+  }
+
+  private async validateScopeTarget(
+    scope: RuleScope,
+    targetId: number | null,
+    applyToAllProducts: boolean,
+    mappedProductIds: number[],
+  ) {
+    if (scope === 'GLOBAL') {
+      return {
+        categoryId: null,
+        brandId: null,
+        seriesId: null,
+        productId: null,
+        variantId: null,
+      };
+    }
+
+    const id = Number(targetId);
+
+    if (scope === 'CATEGORY') {
+      const target = await this.prisma.category.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!target) throw new NotFoundException('Category not found');
+      return {
+        categoryId: id,
+        brandId: null,
+        seriesId: null,
+        productId: null,
+        variantId: null,
+      };
+    }
+
+    if (scope === 'BRAND') {
+      const target = await this.prisma.brand.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!target) throw new NotFoundException('Brand not found');
+      return {
+        categoryId: null,
+        brandId: id,
+        seriesId: null,
+        productId: null,
+        variantId: null,
+      };
+    }
+
+    if (scope === 'SERIES') {
+      const target = await this.prisma.productSeries.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!target) throw new NotFoundException('Series not found');
+      return {
+        categoryId: null,
+        brandId: null,
+        seriesId: id,
+        productId: null,
+        variantId: null,
+      };
+    }
+
+    if (scope === 'PRODUCT') {
+      const target = await this.prisma.product.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!target) throw new NotFoundException('Product/model not found');
+
+      if (!applyToAllProducts && !mappedProductIds.includes(id)) {
+        throw new BadRequestException(
+          'This question is not mapped to the selected product/model',
+        );
+      }
+
+      return {
+        categoryId: null,
+        brandId: null,
+        seriesId: null,
+        productId: id,
+        variantId: null,
+      };
+    }
+
+    const variant = await this.prisma.productVariant.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        productId: true,
+      },
+    });
+
+    if (!variant) {
+      throw new NotFoundException('Variant not found');
+    }
+
+    if (
+      !applyToAllProducts &&
+      !mappedProductIds.includes(variant.productId)
+    ) {
+      throw new BadRequestException(
+        'This question is not mapped to the selected variant model',
+      );
+    }
+
+    return {
+      categoryId: null,
+      brandId: null,
+      seriesId: null,
+      productId: null,
+      variantId: id,
+    };
+  }
+}

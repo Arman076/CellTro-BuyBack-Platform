@@ -12,6 +12,7 @@ type PayoutMethod = "CASH" | "UPI";
 type Address = {
   id: number;
   fullName: string;
+  email?: string | null;
   phone: string;
   house: string;
   street: string;
@@ -50,6 +51,7 @@ interface PickupAddressProps {
 
 const emptyForm = {
   fullName: "",
+  email: "",
   house: "",
   street: "",
   locality: "",
@@ -302,6 +304,7 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
     setEditingAddressId(address.id);
     setForm({
       fullName: address.fullName,
+      email: address.email ?? "",
       house: address.house,
       street: address.street,
       locality: address.locality,
@@ -330,11 +333,24 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
       return;
     }
 
+    const normalizedEmail =
+      form.email.trim().toLowerCase();
+
+    if (
+      !normalizedEmail ||
+      normalizedEmail.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+    ) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
     try {
       setSavingAddress(true);
 
       const payload = {
         ...form,
+        email: normalizedEmail,
       };
 
       const saved = editingAddressId
@@ -398,6 +414,11 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
       return;
     }
 
+    if (!selectedAddress.email) {
+      setError("Please edit the selected address and add your email address.");
+      return;
+    }
+
     setError("");
     setAddressConfirmed(true);
     setSlotConfirmed(false);
@@ -437,6 +458,11 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
 
     if (!selectedAddress.serviceable) {
       setError("Pickup is currently unavailable for the selected pincode.");
+      return;
+    }
+
+    if (!selectedAddress.email) {
+      setError("Please add an email address before confirming pickup.");
       return;
     }
 
@@ -536,6 +562,7 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
                               </div>
 
                               <strong>{address.fullName}</strong>
+                              {address.email && <p>{address.email}</p>}
                               <p>
                                 {address.house}, {address.street}
                                 <br />
@@ -614,6 +641,20 @@ export default function PickupAddress({ verifiedPhone }: PickupAddressProps) {
                             value={form.fullName}
                             onChange={(e) => handleChange("fullName", e.target.value)}
                             placeholder="Enter full name"
+                          />
+                        </div>
+
+                        <div className={styles.field}>
+                          <label htmlFor="email">Email Address</label>
+                          <input
+                            id="email"
+                            type="email"
+                            required
+                            autoComplete="email"
+                            maxLength={254}
+                            value={form.email}
+                            onChange={(e) => handleChange("email", e.target.value)}
+                            placeholder="Enter email address"
                           />
                         </div>
 

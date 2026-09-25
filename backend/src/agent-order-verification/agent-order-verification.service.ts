@@ -1,0 +1,1543 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+
+import {
+  createHmac,
+  randomInt,
+  timingSafeEqual,
+} from 'crypto';
+
+import {
+  OrderEventActorType,
+  OrderEventType,
+  OrderVerificationChannel,
+  OrderVerificationPurpose,
+  OrderVerificationStatus,
+} from '../generated/prisma/client.js';
+
+import {
+  PrismaService,
+} from '../prisma/prisma/prisma.service.js';
+
+import {
+  OtpService,
+} from '../otp/otp.service.js';
+
+import {
+  VendorEmailService,
+} from '../vendor-security/vendor-email.service.js';
+
+import {
+  OrderEventService,
+} from '../order-events/order-event.service.js';
+
+import type {
+  SendOrderVerificationDto,
+} from './dto/send-order-verification.dto.js';
+
+const EMAIL_OTP_EXPIRY_MINUTES = 5;
+const OTP_MAX_ATTEMPTS = 5;
+const RESEND_COOLDOWN_SECONDS = 60;
+
+type AgentIdentity = {
+  agentId: number;
+  vendorId: number;
+};
+
+type OwnedOrder = Awaited<
+  ReturnType<AgentOrderVerificationService['getOwnedOrder']>
+>;
+
+@Injectable()
+export class AgentOrderVerificationService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly otpService: OtpService,
+    private readonly emailService: VendorEmailService,
+    private readonly orderEvents: OrderEventService,
+    
+  ) {}
+
+  private normalizePhone(value: unknown): string {
+    const digits = String(value ?? '').replace(/\D/g, '');
+
+    const local =
+      digits.startsWith('91') && digits.length === 12
+        ? digits.slice(2)
+        : digits;
+
+    if (!/^[6-9]\d{9}$/.test(local)) {
+      throw new BadRequestException(
+        'Enter a valid Indian mobile number.',
+      );
+    }
+
+    return local;
+  }
+
+  private normalizeEmail(value: unknown): string {
+    const email = String(value ?? '')
+      .trim()
+      .toLowerCase();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException(
+        'Enter a valid email address.',
+      );
+    }
+
+    return email;
+  }
+
+  private detectChannel(destination: string): {
+    channel: OrderVerificationChannel;
+    normalized: string;
+  } {
+    const value = String(destination ?? '').trim();
+
+    if (value.includes('@')) {
+      return {
+        channel: OrderVerificationChannel.EMAIL,
+        normalized: this.normalizeEmail(value),
+      };
+    }
+
+    return {
+      channel: OrderVerificationChannel.SMS,
+      normalized: this.normalizePhone(value),
+    };
+  }
+
+  private maskPhone(phone: string): string {
+    return `${phone.slice(0, 2)}******${phone.slice(-2)}`;
+  }
+
+  private maskEmail(email: string): string {
+    const [local, domain] = email.split('@');
+
+    const first = local.charAt(0);
+
+    return `${first}${'*'.repeat(
+      Math.max(3, local.length - 1),
+    )}@${domain}`;
+  }
+
+  private otpSecret(): string {
+    const secret = String(
+      process.env.ORDER_OTP_HMAC_SECRET ??
+        process.env.VENDOR_OTP_HMAC_SECRET ??
+        '',
+    ).trim();
+
+    if (!secret) {
+      throw new Error(
+        'ORDER_OTP_HMAC_SECRET is not configured',
+      );
+    }
+
+    return secret;
+  }
+
+  /**
+   * Never persist the raw destination specifically for an OTP challenge.
+   * The fingerprint binds the challenge to the exact normalized contact.
+   */
+  private destinationFingerprint(
+    orderId: string,
+    purpose: OrderVerificationPurpose,
+    channel: OrderVerificationChannel,
+    normalizedDestination: string,
+  ): string {
+    return createHmac(
+      'sha256',
+      this.otpSecret(),
+    )
+      .update(
+        [
+          'ORDER_DESTINATION',
+          orderId,
+          purpose,
+          channel,
+          normalizedDestination,
+        ].join(':'),
+      )
+      .digest('hex');
+  }
+
+  private hashEmailOtp(
+    challengeId: string,
+    purpose: OrderVerificationPurpose,
+    email: string,
+    otp: string,
+  ): string {
+    return createHmac(
+      'sha256',
+      this.otpSecret(),
+    )
+      .update(
+        [
+          'ORDER_VERIFICATION',
+          challengeId,
+          purpose,
+          email,
+          otp,
+        ].join(':'),
+      )
+      .digest('hex');
+  }
+
+  private secureHashEquals(
+    actual: string,
+    expected: string,
+  ): boolean {
+    const actualBuffer = Buffer.from(
+      actual,
+      'utf8',
+    );
+
+    const expectedBuffer = Buffer.from(
+      expected,
+      'utf8',
+    );
+
+    if (
+      actualBuffer.length !==
+      expectedBuffer.length
+    ) {
+      return false;
+    }
+
+    return timingSafeEqual(
+      actualBuffer,
+      expectedBuffer,
+    );
+  }
+
+  private async getOwnedOrder(
+    identity: AgentIdentity,
+    orderNumber: string,
+  ) {
+    const order =
+      await this.prisma.sellOrder.findFirst({
+        where: {
+          orderNumber,
+
+          currentVendorId:
+            identity.vendorId,
+
+          agentAssignments: {
+            some: {
+              agentId:
+                identity.agentId,
+
+              vendorId:
+                identity.vendorId,
+
+              unassignedAt:
+                null,
+            },
+          },
+        },
+
+        select: {
+          id: true,
+          orderNumber: true,
+          status: true,
+
+          customer: {
+            select: {
+              phone: true,
+              email: true,
+              normalizedEmail: true,
+            },
+          },
+
+          addressSnapshot: {
+            select: {
+              phone: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+    if (!order) {
+      throw new NotFoundException(
+        'Order not found.',
+      );
+    }
+
+    return order;
+  }
+
+  private ensurePurposeAllowed(
+    purpose: OrderVerificationPurpose,
+    status: string,
+  ): void {
+    if (
+      purpose ===
+        OrderVerificationPurpose.INSPECTION_START &&
+      ![
+        'PICKUP_REQUESTED',
+        'PICKUP_CONFIRMED',
+        'PICKUP_STARTED',
+      ].includes(status)
+    ) {
+      throw new ConflictException(
+        'Inspection verification is not allowed for the current order status.',
+      );
+    }
+
+    if (
+      (
+        purpose ===
+          OrderVerificationPurpose.QUOTE_ACCEPT ||
+        purpose ===
+          OrderVerificationPurpose.QUOTE_REJECT
+      ) &&
+      status !==
+        'INSPECTION_COMPLETED'
+    ) {
+      throw new ConflictException(
+        'Quote decision verification is allowed only after inspection is completed.',
+      );
+    }
+  }
+
+  private getAllowedDestinations(
+    order: OwnedOrder,
+    channel: OrderVerificationChannel,
+  ): string[] {
+    if (
+      channel ===
+      OrderVerificationChannel.SMS
+    ) {
+      const values = [
+        order.addressSnapshot?.phone,
+        order.customer.phone,
+      ].filter(
+        (
+          value,
+        ): value is string =>
+          Boolean(value),
+      );
+
+      return [
+        ...new Set(
+          values.map((value) =>
+            this.normalizePhone(
+              value,
+            ),
+          ),
+        ),
+      ];
+    }
+
+    const values = [
+      order.addressSnapshot?.email,
+      order.customer.normalizedEmail,
+      order.customer.email,
+    ].filter(
+      (
+        value,
+      ): value is string =>
+        Boolean(value),
+    );
+
+    return [
+      ...new Set(
+        values.map((value) =>
+          this.normalizeEmail(
+            value,
+          ),
+        ),
+      ),
+    ];
+  }
+
+  private verifyDestinationMatches(
+    order: OwnedOrder,
+    channel: OrderVerificationChannel,
+    normalizedDestination: string,
+  ): void {
+    const allowed =
+      this.getAllowedDestinations(
+        order,
+        channel,
+      );
+
+    if (
+      !allowed.includes(
+        normalizedDestination,
+      )
+    ) {
+      if (
+        channel ===
+        OrderVerificationChannel.SMS
+      ) {
+        throw new ForbiddenException(
+          'Mobile number does not match this order.',
+        );
+      }
+
+      throw new ForbiddenException(
+        'Email address does not match this order.',
+      );
+    }
+  }
+
+  /**
+   * Resolves the exact authoritative destination that was selected
+   * when the challenge was created.
+   *
+   * This fixes the previous problem where verification could simply
+   * pick addressSnapshot first even when the OTP had been sent to the
+   * customer's other authoritative contact.
+   */
+  private resolveChallengeDestination(
+    order: OwnedOrder,
+    challenge: {
+      purpose: OrderVerificationPurpose;
+      channel: OrderVerificationChannel;
+      destinationFingerprint: string;
+    },
+  ): string {
+    const allowed =
+      this.getAllowedDestinations(
+        order,
+        challenge.channel,
+      );
+
+    for (
+      const destination of allowed
+    ) {
+      const fingerprint =
+        this.destinationFingerprint(
+          order.id,
+          challenge.purpose,
+          challenge.channel,
+          destination,
+        );
+
+      if (
+        this.secureHashEquals(
+          fingerprint,
+          challenge.destinationFingerprint,
+        )
+      ) {
+        return destination;
+      }
+    }
+
+    throw new UnauthorizedException(
+      'Verification destination is no longer valid for this order.',
+    );
+  }
+
+  private async enforceCooldown(
+    orderId: string,
+    purpose: OrderVerificationPurpose,
+  ): Promise<void> {
+    const latest =
+      await this.prisma.orderVerificationChallenge.findFirst({
+        where: {
+          orderId,
+          purpose,
+
+          status: {
+            in: [
+              OrderVerificationStatus.PENDING,
+              OrderVerificationStatus.VERIFIED,
+            ],
+          },
+        },
+
+        orderBy: {
+          createdAt: 'desc',
+        },
+
+        select: {
+          createdAt: true,
+        },
+      });
+
+    if (!latest) {
+      return;
+    }
+
+    const elapsed =
+      Date.now() -
+      latest.createdAt.getTime();
+
+    const cooldownMs =
+      RESEND_COOLDOWN_SECONDS *
+      1000;
+
+    if (
+      elapsed <
+      cooldownMs
+    ) {
+      const remaining =
+        Math.ceil(
+          (
+            cooldownMs -
+            elapsed
+          ) / 1000,
+        );
+
+      throw new HttpException(
+        `Please wait ${remaining} seconds before requesting another OTP.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private async registerFailedAttempt(
+    challengeId: string,
+  ): Promise<void> {
+    const updated =
+      await this.prisma.orderVerificationChallenge.update({
+        where: {
+          id: challengeId,
+        },
+
+        data: {
+          attempts: {
+            increment: 1,
+          },
+        },
+
+        select: {
+          attempts: true,
+        },
+      });
+
+    if (
+      updated.attempts >=
+      OTP_MAX_ATTEMPTS
+    ) {
+      await this.prisma.orderVerificationChallenge.updateMany({
+        where: {
+          id: challengeId,
+
+          status:
+            OrderVerificationStatus.PENDING,
+        },
+
+        data: {
+          status:
+            OrderVerificationStatus.LOCKED,
+        },
+      });
+    }
+  }
+
+  async send(
+    identity: AgentIdentity,
+    orderNumber: string,
+    body: SendOrderVerificationDto,
+  ) {
+    const order =
+      await this.getOwnedOrder(
+        identity,
+        orderNumber,
+      );
+
+    this.ensurePurposeAllowed(
+      body.purpose,
+      order.status,
+    );
+
+    const {
+      channel,
+      normalized,
+    } =
+      this.detectChannel(
+        body.destination,
+      );
+
+    this.verifyDestinationMatches(
+      order,
+      channel,
+      normalized,
+    );
+
+    await this.enforceCooldown(
+      order.id,
+      body.purpose,
+    );
+
+    const fingerprint =
+      this.destinationFingerprint(
+        order.id,
+        body.purpose,
+        channel,
+        normalized,
+      );
+
+    const now = new Date();
+
+    /*
+     * Important:
+     * We do NOT expire the previous challenge before the external
+     * provider/email send succeeds. Otherwise a temporary provider
+     * failure could destroy the customer's still-valid OTP.
+     */
+
+    if (
+      channel ===
+      OrderVerificationChannel.SMS
+    ) {
+      const providerResult =
+        await this.otpService.sendOtp(
+          normalized,
+        );
+
+      const expiresAt =
+        new Date(
+          now.getTime() +
+            providerResult.expiresInSeconds *
+              1000,
+        );
+
+      const challenge =
+        await this.prisma.orderVerificationChallenge.create({
+          data: {
+            orderId:
+              order.id,
+
+            provider:
+              providerResult.provider,
+
+            purpose:
+              body.purpose,
+
+            channel,
+
+            otpHash:
+              null,
+
+            destinationMasked:
+              this.maskPhone(
+                normalized,
+              ),
+
+            destinationFingerprint:
+              fingerprint,
+
+            contextHash:
+              null,
+
+            expiresAt,
+          },
+
+          select: {
+            id: true,
+            purpose: true,
+            channel: true,
+            destinationMasked: true,
+            expiresAt: true,
+          },
+        });
+
+      await this.prisma.orderVerificationChallenge.updateMany({
+        where: {
+          orderId:
+            order.id,
+
+          purpose:
+            body.purpose,
+
+          status:
+            OrderVerificationStatus.PENDING,
+
+          id: {
+            not:
+              challenge.id,
+          },
+        },
+
+        data: {
+          status:
+            OrderVerificationStatus.EXPIRED,
+        },
+      });
+
+      await this.orderEvents.record({
+        orderId:
+          order.id,
+
+        eventType:
+          OrderEventType.VERIFICATION_SENT,
+
+        actorType:
+          OrderEventActorType.AGENT,
+
+        agentId:
+          identity.agentId,
+
+        metadata: {
+          purpose:
+            body.purpose,
+
+          channel:
+            OrderVerificationChannel.SMS,
+
+          challengeId:
+            challenge.id,
+
+          destinationMasked:
+            challenge.destinationMasked,
+        },
+      });
+
+      return {
+        challengeId:
+          challenge.id,
+
+        purpose:
+          challenge.purpose,
+
+        channel:
+          challenge.channel,
+
+        destinationMasked:
+          challenge.destinationMasked,
+
+        expiresAt:
+          challenge.expiresAt,
+
+        expiresInSeconds:
+          providerResult.expiresInSeconds,
+      };
+    }
+
+    const otp =
+      String(
+        randomInt(
+          100000,
+          1000000,
+        ),
+      );
+
+    const expiresAt =
+      new Date(
+        now.getTime() +
+          EMAIL_OTP_EXPIRY_MINUTES *
+            60 *
+            1000,
+      );
+
+    /*
+     * We need the challenge id before generating the OTP HMAC,
+     * therefore the row starts with a non-secret placeholder hash.
+     */
+    const challenge =
+      await this.prisma.orderVerificationChallenge.create({
+        data: {
+          orderId:
+            order.id,
+
+          provider:
+            'SMTP',
+
+          purpose:
+            body.purpose,
+
+          channel,
+
+          destinationMasked:
+            this.maskEmail(
+              normalized,
+            ),
+
+          destinationFingerprint:
+            fingerprint,
+
+          contextHash:
+            null,
+
+          expiresAt,
+
+          otpHash:
+            'PENDING',
+        },
+
+        select: {
+          id: true,
+          destinationMasked: true,
+        },
+      });
+
+    const otpHash =
+      this.hashEmailOtp(
+        challenge.id,
+        body.purpose,
+        normalized,
+        otp,
+      );
+
+    await this.prisma.orderVerificationChallenge.update({
+      where: {
+        id:
+          challenge.id,
+      },
+
+      data: {
+        otpHash,
+      },
+    });
+
+    try {
+      await this.emailService.sendOrderVerificationOtp({
+        email:
+          normalized,
+
+        otp,
+
+        purpose:
+          body.purpose,
+
+        orderNumber:
+          order.orderNumber,
+      });
+    } catch (error) {
+      await this.prisma.orderVerificationChallenge.updateMany({
+        where: {
+          id:
+            challenge.id,
+
+          status:
+            OrderVerificationStatus.PENDING,
+        },
+
+        data: {
+          status:
+            OrderVerificationStatus.EXPIRED,
+        },
+      });
+
+      throw error;
+    }
+
+    /*
+     * Only after successful delivery do we invalidate older
+     * pending challenges for the same order/purpose.
+     */
+    await this.prisma.orderVerificationChallenge.updateMany({
+      where: {
+        orderId:
+          order.id,
+
+        purpose:
+          body.purpose,
+
+        status:
+          OrderVerificationStatus.PENDING,
+
+        id: {
+          not:
+            challenge.id,
+        },
+      },
+
+      data: {
+        status:
+          OrderVerificationStatus.EXPIRED,
+      },
+    });
+
+    await this.orderEvents.record({
+      orderId:
+        order.id,
+
+      eventType:
+        OrderEventType.VERIFICATION_SENT,
+
+      actorType:
+        OrderEventActorType.AGENT,
+
+      agentId:
+        identity.agentId,
+
+      metadata: {
+        purpose:
+          body.purpose,
+
+        channel:
+          OrderVerificationChannel.EMAIL,
+
+        challengeId:
+          challenge.id,
+
+        destinationMasked:
+          challenge.destinationMasked,
+      },
+    });
+
+    /*
+     * OTP is deliberately NEVER returned.
+     * This applies to development/test as well as production.
+     */
+    return {
+      challengeId:
+        challenge.id,
+
+      purpose:
+        body.purpose,
+
+      channel:
+        OrderVerificationChannel.EMAIL,
+
+      destinationMasked:
+        challenge.destinationMasked,
+
+      expiresAt,
+
+      expiresInSeconds:
+        EMAIL_OTP_EXPIRY_MINUTES *
+        60,
+    };
+  }
+
+  async verify(
+    identity: AgentIdentity,
+    orderNumber: string,
+    challengeId: string,
+    otp: string,
+  ) {
+    const order =
+      await this.getOwnedOrder(
+        identity,
+        orderNumber,
+      );
+
+    const challenge =
+      await this.prisma.orderVerificationChallenge.findFirst({
+        where: {
+          id:
+            challengeId,
+
+          orderId:
+            order.id,
+        },
+
+        select: {
+          id: true,
+          provider: true,
+          purpose: true,
+          channel: true,
+          otpHash: true,
+          destinationMasked: true,
+          destinationFingerprint: true,
+          contextHash: true,
+          status: true,
+          attempts: true,
+          expiresAt: true,
+          verifiedAt: true,
+        },
+      });
+
+    if (!challenge) {
+      throw new NotFoundException(
+        'Verification challenge not found.',
+      );
+    }
+
+    if (
+      challenge.status ===
+        OrderVerificationStatus.VERIFIED ||
+      challenge.status ===
+        OrderVerificationStatus.CONSUMED
+    ) {
+      return {
+        verified: true,
+
+        challengeId:
+          challenge.id,
+
+        purpose:
+          challenge.purpose,
+
+        channel:
+          challenge.channel,
+
+        verifiedAt:
+          challenge.verifiedAt,
+      };
+    }
+
+    if (
+      challenge.status ===
+        OrderVerificationStatus.EXPIRED ||
+      challenge.status ===
+        OrderVerificationStatus.LOCKED ||
+      challenge.expiresAt.getTime() <=
+        Date.now()
+    ) {
+      if (
+        challenge.status ===
+        OrderVerificationStatus.PENDING
+      ) {
+        await this.prisma.orderVerificationChallenge.updateMany({
+          where: {
+            id:
+              challenge.id,
+
+            status:
+              OrderVerificationStatus.PENDING,
+          },
+
+          data: {
+            status:
+              OrderVerificationStatus.EXPIRED,
+          },
+        });
+      }
+
+      throw new UnauthorizedException(
+        'OTP has expired. Request a new OTP.',
+      );
+    }
+
+    this.ensurePurposeAllowed(
+      challenge.purpose,
+      order.status,
+    );
+
+    const destination =
+      this.resolveChallengeDestination(
+        order,
+        challenge,
+      );
+
+    if (
+      challenge.channel ===
+      OrderVerificationChannel.SMS
+    ) {
+      try {
+        await this.otpService.verifyOtp(
+          destination,
+          otp,
+        );
+      } catch (error) {
+        await this.registerFailedAttempt(
+          challenge.id,
+        );
+
+        throw error;
+      }
+    } else {
+      if (
+        !challenge.otpHash ||
+        challenge.otpHash ===
+          'PENDING'
+      ) {
+        throw new UnauthorizedException(
+          'OTP challenge is not valid.',
+        );
+      }
+
+      const expected =
+        this.hashEmailOtp(
+          challenge.id,
+          challenge.purpose,
+          destination,
+          String(otp),
+        );
+
+      if (
+        !this.secureHashEquals(
+          expected,
+          challenge.otpHash,
+        )
+      ) {
+        await this.registerFailedAttempt(
+          challenge.id,
+        );
+
+        throw new UnauthorizedException(
+          'Invalid OTP.',
+        );
+      }
+    }
+
+    const now = new Date();
+
+    /*
+     * Conditional update prevents two concurrent verify requests
+     * from independently transitioning the same PENDING challenge.
+     */
+    const transitioned =
+      await this.prisma.orderVerificationChallenge.updateMany({
+        where: {
+          id:
+            challenge.id,
+
+          status:
+            OrderVerificationStatus.PENDING,
+
+          expiresAt: {
+            gt: now,
+          },
+        },
+
+        data: {
+          status:
+            OrderVerificationStatus.VERIFIED,
+
+          verifiedAt:
+            now,
+        },
+      });
+
+    if (
+      transitioned.count === 0
+    ) {
+      const current =
+        await this.prisma.orderVerificationChallenge.findUnique({
+          where: {
+            id:
+              challenge.id,
+          },
+
+          select: {
+            status: true,
+            verifiedAt: true,
+          },
+        });
+
+      if (
+        current?.status ===
+          OrderVerificationStatus.VERIFIED ||
+        current?.status ===
+          OrderVerificationStatus.CONSUMED
+      ) {
+        return {
+          verified: true,
+
+          challengeId:
+            challenge.id,
+
+          purpose:
+            challenge.purpose,
+
+          channel:
+            challenge.channel,
+
+          verifiedAt:
+            current.verifiedAt,
+        };
+      }
+
+      throw new UnauthorizedException(
+        'OTP challenge is no longer valid.',
+      );
+    }
+
+    /*
+     * Event idempotency will be moved into the same transaction as
+     * lifecycle mutation in the next Start Inspection batch.
+     *
+     * For this verification-only transition, record the audit event
+     * now. No OTP/raw destination is placed in metadata.
+     */
+    await this.orderEvents.record({
+      orderId:
+        order.id,
+
+      eventType:
+        OrderEventType.VERIFICATION_VERIFIED,
+
+      actorType:
+        OrderEventActorType.AGENT,
+
+      agentId:
+        identity.agentId,
+
+      metadata: {
+        purpose:
+          challenge.purpose,
+
+        channel:
+          challenge.channel,
+
+        challengeId:
+          challenge.id,
+
+        destinationMasked:
+          challenge.destinationMasked,
+      },
+    });
+
+    return {
+      verified: true,
+
+      challengeId:
+        challenge.id,
+
+      purpose:
+        challenge.purpose,
+
+      channel:
+        challenge.channel,
+
+      verifiedAt:
+        now,
+    };
+  }
+    async startInspection(
+  identity: AgentIdentity,
+  orderNumber: string,
+  challengeId: string,
+) {
+  const order =
+    await this.getOwnedOrder(
+      identity,
+      orderNumber,
+    );
+
+  if (
+    ![
+      'PICKUP_REQUESTED',
+      'PICKUP_CONFIRMED',
+      'PICKUP_STARTED',
+    ].includes(order.status)
+  ) {
+    throw new ConflictException(
+      'Inspection cannot be started for the current order status.',
+    );
+  }
+
+  const result =
+    await this.prisma.$transaction(
+      async (tx) => {
+        const challenge =
+          await tx.orderVerificationChallenge.findFirst({
+            where: {
+              id: challengeId,
+              orderId: order.id,
+              purpose:
+                OrderVerificationPurpose.INSPECTION_START,
+            },
+
+            select: {
+              id: true,
+              status: true,
+              purpose: true,
+              channel: true,
+              destinationMasked: true,
+              expiresAt: true,
+              verifiedAt: true,
+              consumedAt: true,
+            },
+          });
+
+        if (!challenge) {
+          throw new NotFoundException(
+            'Inspection verification challenge not found.',
+          );
+        }
+
+        /*
+         * Idempotent retry:
+         * A consumed challenge is accepted only when
+         * this order has genuinely entered inspection.
+         */
+        if (
+          challenge.status ===
+          OrderVerificationStatus.CONSUMED
+        ) {
+          const existingEvent =
+            await tx.orderEvent.findUnique({
+              where: {
+                idempotencyKey:
+                  `inspection-started:${order.id}`,
+              },
+
+              select: {
+                id: true,
+                createdAt: true,
+              },
+            });
+
+          const currentOrder =
+            await tx.sellOrder.findUnique({
+              where: {
+                id: order.id,
+              },
+
+              select: {
+                status: true,
+              },
+            });
+
+          if (
+            !existingEvent ||
+            currentOrder?.status !==
+              'PICKUP_STARTED'
+          ) {
+            throw new ConflictException(
+              'Inspection state is inconsistent. Please contact support.',
+            );
+          }
+
+          return {
+            alreadyStarted: true,
+            challenge,
+            status:
+              currentOrder.status,
+            startedAt:
+              existingEvent.createdAt,
+          };
+        }
+
+        if (
+          challenge.status !==
+          OrderVerificationStatus.VERIFIED
+        ) {
+          throw new UnauthorizedException(
+            'Verify the customer OTP before starting inspection.',
+          );
+        }
+
+        if (
+          challenge.expiresAt.getTime() <=
+          Date.now()
+        ) {
+          throw new UnauthorizedException(
+            'OTP verification has expired. Request a new OTP.',
+          );
+        }
+
+        const now =
+          new Date();
+
+        /*
+         * Exactly one request can consume
+         * VERIFIED -> CONSUMED.
+         */
+        const consumed =
+          await tx.orderVerificationChallenge.updateMany({
+            where: {
+              id: challenge.id,
+              orderId: order.id,
+
+              purpose:
+                OrderVerificationPurpose.INSPECTION_START,
+
+              status:
+                OrderVerificationStatus.VERIFIED,
+            },
+
+            data: {
+              status:
+                OrderVerificationStatus.CONSUMED,
+
+              consumedAt:
+                now,
+            },
+          });
+
+        if (
+          consumed.count !== 1
+        ) {
+          const current =
+            await tx.orderVerificationChallenge.findUnique({
+              where: {
+                id: challenge.id,
+              },
+
+              select: {
+                status: true,
+              },
+            });
+
+          if (
+            current?.status ===
+            OrderVerificationStatus.CONSUMED
+          ) {
+            throw new ConflictException(
+              'Inspection is already being started. Please retry.',
+            );
+          }
+
+          throw new ConflictException(
+            'Inspection verification is no longer valid.',
+          );
+        }
+
+        /*
+         * State transition is conditional.
+         * This protects against concurrent lifecycle changes.
+         */
+        const orderTransition =
+          await tx.sellOrder.updateMany({
+            where: {
+              id: order.id,
+
+              status: {
+                in: [
+                  'PICKUP_REQUESTED',
+                  'PICKUP_CONFIRMED',
+                ],
+              },
+            },
+
+            data: {
+              status:
+                'PICKUP_STARTED',
+            },
+          });
+
+        /*
+         * If order was already PICKUP_STARTED before
+         * this challenge was consumed, do not create
+         * another status-history row.
+         */
+        if (
+          orderTransition.count === 1
+        ) {
+          await tx.orderStatusHistory.create({
+            data: {
+              orderId:
+                order.id,
+
+              status:
+                'PICKUP_STARTED',
+
+              note:
+                'Inspection started after customer OTP verification.',
+            },
+          });
+        } else {
+          const currentOrder =
+            await tx.sellOrder.findUnique({
+              where: {
+                id: order.id,
+              },
+
+              select: {
+                status: true,
+              },
+            });
+
+          if (
+            currentOrder?.status !==
+            'PICKUP_STARTED'
+          ) {
+            throw new ConflictException(
+              'Order status changed before inspection could start.',
+            );
+          }
+        }
+
+        /*
+         * Same DB transaction:
+         * challenge consumption
+         * + order lifecycle
+         * + status history
+         * + audit event.
+         */
+        const inspectionEvent =
+          await this.orderEvents.record(
+            {
+              orderId:
+                order.id,
+
+              eventType:
+                OrderEventType.INSPECTION_STARTED,
+
+              actorType:
+                OrderEventActorType.AGENT,
+
+              agentId:
+                identity.agentId,
+
+              idempotencyKey:
+                `inspection-started:${order.id}`,
+
+              metadata: {
+                challengeId:
+                  challenge.id,
+
+                channel:
+                  challenge.channel,
+
+                destinationMasked:
+                  challenge.destinationMasked,
+              },
+            },
+            tx,
+          );
+
+        return {
+          alreadyStarted: false,
+
+          challenge: {
+            ...challenge,
+
+            status:
+              OrderVerificationStatus.CONSUMED,
+
+            consumedAt:
+              now,
+          },
+
+          status:
+            'PICKUP_STARTED' as const,
+
+          startedAt:
+            inspectionEvent.createdAt,
+        };
+      },
+    );
+
+  return {
+    started: true,
+
+    alreadyStarted:
+      result.alreadyStarted,
+
+    orderNumber:
+      order.orderNumber,
+
+    status:
+      result.status,
+
+    inspection: {
+      started: true,
+
+      challengeId:
+        result.challenge.id,
+
+      verificationPurpose:
+        result.challenge.purpose,
+
+      verificationChannel:
+        result.challenge.channel,
+
+      verifiedAt:
+        result.challenge.verifiedAt,
+
+      startedAt:
+        result.startedAt,
+    },
+
+    evidence: {
+      enabled:
+        process.env
+          .AGENT_INSPECTION_EVIDENCE_ENABLED ===
+        'true',
+    },
+  };
+}
+}

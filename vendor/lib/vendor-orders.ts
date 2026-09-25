@@ -14,36 +14,53 @@ export type StatusGroup =
   | "COMPLETED"
   | "CANCELLED";
 
-export type PickupSlot = {
-  code: string;
-  label: string;
-  startTime: string;
-  endTime: string;
-} | null;
-
 export type OrderAddress = {
-  house: string;
-  street: string;
-  locality: string;
-  landmark: string | null;
-  city: string;
-  state: string;
-  pincode: string;
+  fullName?: string | null;
+  phone?: string | null;
+  house?: string | null;
+  street?: string | null;
+  locality?: string | null;
+  landmark?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+};
+
+export type OrderAgent = {
+  id: number;
+  agentCode?: string | null;
+  name: string;
+  fullName?: string | null;
+  mobile: string | null;
+  email?: string | null;
+};
+
+export type ActiveVendorAgent = {
+  id: number;
+  agentCode: string;
+  fullName: string;
+  mobile: string;
+  email?: string | null;
+  status: string;
+  assignmentCount?: number;
 };
 
 export type VendorOrder = {
   id: string;
   orderNumber: string;
-
   productName: string;
+  productImage: string | null;
   variantLabel: string;
-
   finalPrice: string | number;
-
   status: string;
-
   pickupDate: string;
-  pickupSlot: PickupSlot;
+
+  pickupSlot: {
+    code: string;
+    label: string;
+    startTime: string;
+    endTime: string;
+  } | null;
 
   customer: {
     name: string;
@@ -52,14 +69,21 @@ export type VendorOrder = {
 
   address: OrderAddress | null;
 
-  assignment: {
+  location?: {
+    locality?: string | null;
+    city?: string | null;
+    state?: string | null;
+    pincode?: string | null;
+  } | null;
+
+  assignment?: {
     id: number;
     source: string;
     reason: string;
     assignedAt: string;
   } | null;
 
-  agent: null;
+  agent: OrderAgent | null;
 
   createdAt: string;
   updatedAt: string;
@@ -77,150 +101,21 @@ export type VendorOrdersResponse = {
 
   filters?: {
     dateFilter: DateFilter;
-    status: string;
-    statusGroup: StatusGroup;
+    status?: string;
+    statusGroup?: StatusGroup;
     search: string;
   };
-};
-
-export type DeviceReportAnswer = {
-  id: number;
-  label: string;
-  value: string;
-  issueCode: string | null;
-  severity: string;
-  parentOptionId: number | null;
-
-  issueGroup: {
-    id: number;
-    name: string;
-  } | null;
-
-  selectionType:
-    | "PRIMARY"
-    | "OPTION"
-    | "CHILD";
-};
-
-export type DeviceReportCheck = {
-  itemId: number;
-  name: string;
-  question: string;
-  answerType: string;
-  selectedAnswers: DeviceReportAnswer[];
-};
-
-export type DeviceReportSection = {
-  id: number;
-  name: string;
-  checks: DeviceReportCheck[];
-};
-
-export type DeviceReport = {
-  available: boolean;
-
-  historicalLabelsResolved: boolean;
-
-  perAnswerDeductionAvailable: boolean;
-
-  sections: DeviceReportSection[];
-};
-
-export type VendorOrderDetails = {
-  id: string;
-  orderNumber: string;
-
-  product: {
-    id: number;
-    variantId: number;
-    name: string;
-    variant: string;
-  };
-
-  pricing: {
-    basePrice: string | number;
-    totalDeduction: string | number;
-    finalPrice: string | number;
-  };
-
-  questionnaire: unknown;
-
-  deviceReport: DeviceReport;
-
-  status: string;
-
-  pickup: {
-    date: string;
-    slot: PickupSlot;
-  };
-
-  payout: {
-    method: string;
-    upiMobile: string | null;
-  };
-
-  customer: {
-    name: string;
-    phone: string;
-  } | null;
-
-  address: {
-    fullName: string;
-    phone: string;
-
-    house: string;
-    street: string;
-    locality: string;
-    landmark: string | null;
-
-    pincode: string;
-    city: string;
-    state: string;
-    type: string;
-  } | null;
-
-  statusHistory: Array<{
-    id: number;
-    status: string;
-    note: string | null;
-    createdAt: string;
-  }>;
-
-  reschedules: Array<{
-    id: number;
-    oldPickupDate: string;
-    newPickupDate: string;
-    oldSlotLabel: string;
-    newSlotLabel: string;
-    createdAt: string;
-  }>;
-
-  assignmentHistory: Array<{
-    id: number;
-    source: string;
-    reason: string;
-    assignedAt: string;
-    unassignedAt: string | null;
-    unassignmentReason: string | null;
-  }>;
-
-  agent: null;
-
-  createdAt: string;
-  updatedAt: string;
 };
 
 export type VendorDashboardOrder = {
   id: string;
   orderNumber: string;
   productName: string;
+  productImage: string | null;
   variantLabel: string;
   finalPrice: string | number;
   status: string;
-
   pickupDate: string;
-  pickupSlotLabel: string | null;
-
   customerName: string | null;
 
   location: {
@@ -234,9 +129,7 @@ export type VendorDashboardOrder = {
 
 export type VendorDashboardResponse = {
   dateFilter: DateFilter;
-
   totalAssigned: number;
-
   statusCounts: Record<string, number>;
 
   statusGroups: {
@@ -249,6 +142,145 @@ export type VendorDashboardResponse = {
   recentOrders: VendorDashboardOrder[];
 };
 
+export type QuestionnaireSelection = {
+  itemId: number;
+  optionId?: number | null;
+  optionIds?: number[];
+  childOptionIds?: number[];
+};
+
+export type DeviceReportAnswer = {
+  id: number;
+  label: string;
+  severity?: string | null;
+  selectionType: string;
+
+  issueGroup?: {
+    name?: string | null;
+  } | null;
+};
+
+export type DeviceReportCheck = {
+  itemId: number;
+  name: string;
+  question: string;
+  selectedAnswers: DeviceReportAnswer[];
+};
+
+export type DeviceReportSection = {
+  id: number | string;
+  name: string;
+  checks: DeviceReportCheck[];
+};
+
+export type VendorOrderDetails = {
+  id: string;
+  orderNumber: string;
+
+  product: {
+    id: number;
+    variantId: number;
+    name: string;
+    image: string | null;
+    variant: string;
+  };
+
+  pricing: {
+    basePrice: string | number;
+    totalDeduction: string | number;
+    finalPrice: string | number;
+  };
+
+  questionnaire: unknown;
+
+  deviceReport?: {
+    available: boolean;
+    sections: DeviceReportSection[];
+  } | null;
+
+  status: string;
+
+  pickup: {
+    date: string;
+
+    slot: {
+      code: string;
+      label: string;
+      startTime: string;
+      endTime: string;
+    } | null;
+  };
+
+  payout: {
+    method: string;
+    upiMobile: string | null;
+  };
+
+  customer: {
+    name: string;
+    phone: string;
+  } | null;
+
+  address: OrderAddress | null;
+
+  statusHistory: Array<{
+    id: number;
+    status: string;
+    note: string | null;
+    createdAt: string;
+  }>;
+
+  reschedules: Array<{
+    id: number;
+    oldPickupDate: string;
+    newPickupDate: string;
+    oldSlotLabel: string | null;
+    newSlotLabel: string | null;
+    createdAt: string;
+  }>;
+
+  assignmentHistory: Array<{
+    id: number;
+    source: string;
+    reason: string;
+    assignedAt: string;
+    unassignedAt: string | null;
+    unassignmentReason: string | null;
+  }>;
+
+  agentAssignmentHistory?: Array<{
+    id: number;
+    source: string;
+    assignedAt: string;
+    unassignedAt: string | null;
+    unassignmentReason: string | null;
+    agent: OrderAgent;
+  }>;
+
+  agent: OrderAgent | null;
+
+  createdAt: string;
+  updatedAt: string;
+};
+
+type VendorAgentsResponse =
+  | ActiveVendorAgent[]
+  | {
+      data?: ActiveVendorAgent[];
+      agents?: ActiveVendorAgent[];
+    };
+
+export type AssignOrderAgentResponse = {
+  changed?: boolean;
+  message?: string;
+  agent?: OrderAgent | null;
+  assignment?: {
+    id: number;
+    source: string;
+    assignedAt: string;
+  };
+};
+
 export async function getVendorOrders(params?: {
   page?: number;
   limit?: number;
@@ -259,48 +291,29 @@ export async function getVendorOrders(params?: {
 }) {
   const query = new URLSearchParams();
 
-  query.set(
-    "page",
-    String(params?.page ?? 1),
-  );
-
-  query.set(
-    "limit",
-    String(params?.limit ?? 20),
-  );
+  query.set("page", String(params?.page ?? 1));
+  query.set("limit", String(params?.limit ?? 20));
 
   if (params?.search?.trim()) {
-    query.set(
-      "search",
-      params.search.trim(),
-    );
+    query.set("search", params.search.trim());
   }
 
   if (params?.status?.trim()) {
-    query.set(
-      "status",
-      params.status.trim(),
-    );
+    query.set("status", params.status.trim());
   }
 
   if (
     params?.statusGroup &&
     params.statusGroup !== "ALL"
   ) {
-    query.set(
-      "statusGroup",
-      params.statusGroup,
-    );
+    query.set("statusGroup", params.statusGroup);
   }
 
   if (
     params?.dateFilter &&
     params.dateFilter !== "ALL"
   ) {
-    query.set(
-      "dateFilter",
-      params.dateFilter,
-    );
+    query.set("dateFilter", params.dateFilter);
   }
 
   return vendorApi<VendorOrdersResponse>(
@@ -312,9 +325,7 @@ export async function getVendorOrder(
   orderNumber: string,
 ) {
   return vendorApi<VendorOrderDetails>(
-    `/vendor-orders/${encodeURIComponent(
-      orderNumber,
-    )}`,
+    `/vendor-orders/${encodeURIComponent(orderNumber)}`,
   );
 }
 
@@ -324,51 +335,85 @@ export async function getVendorDashboard(
   const query = new URLSearchParams();
 
   if (dateFilter !== "ALL") {
-    query.set(
-      "dateFilter",
-      dateFilter,
-    );
+    query.set("dateFilter", dateFilter);
   }
 
   const suffix =
-    query.size > 0
-      ? `?${query.toString()}`
-      : "";
+    query.size > 0 ? `?${query.toString()}` : "";
 
   return vendorApi<VendorDashboardResponse>(
     `/vendor-orders/dashboard${suffix}`,
   );
 }
 
-export function formatMoney(
-  value:
-    | string
-    | number
-    | null
-    | undefined,
+/*
+ * Reuses the existing Vendor Agents module.
+ * No duplicate agent-list endpoint is required.
+ */
+export async function getActiveVendorAgents() {
+  const response = await vendorApi<VendorAgentsResponse>(
+    "/vendor-agents?status=ACTIVE",
+  );
+
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  if (Array.isArray(response.data)) {
+    return response.data;
+  }
+
+  if (Array.isArray(response.agents)) {
+    return response.agents;
+  }
+
+  return [];
+}
+
+/*
+ * Backend must validate:
+ * - order belongs to logged-in vendor
+ * - agent belongs to logged-in vendor
+ * - agent is ACTIVE
+ * - reassignment is transactional
+ *
+ * Frontend never sends vendorId.
+ */
+export async function assignVendorOrderAgent(
+  orderNumber: string,
+  agentId: number,
 ) {
-  const amount =
-    Number(value ?? 0);
+  return vendorApi<AssignOrderAgentResponse>(
+    `/vendor-orders/${encodeURIComponent(
+      orderNumber,
+    )}/agent`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        agentId,
+      }),
+    },
+  );
+}
+
+export function formatMoney(
+  value: string | number | null | undefined,
+) {
+  const amount = Number(value ?? 0);
 
   if (!Number.isFinite(amount)) {
     return "₹0";
   }
 
-  return new Intl.NumberFormat(
-    "en-IN",
-    {
-      style: "currency",
-      currency: "INR",
-      maximumFractionDigits: 0,
-    },
-  ).format(amount);
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(amount);
 }
 
 export function formatDate(
-  value:
-    | string
-    | null
-    | undefined,
+  value: string | null | undefined,
 ) {
   if (!value) {
     return "—";
@@ -376,31 +421,20 @@ export function formatDate(
 
   const date = new Date(value);
 
-  if (
-    Number.isNaN(
-      date.getTime(),
-    )
-  ) {
+  if (Number.isNaN(date.getTime())) {
     return "—";
   }
 
-  return new Intl.DateTimeFormat(
-    "en-IN",
-    {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      timeZone:
-        "Asia/Kolkata",
-    },
-  ).format(date);
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  }).format(date);
 }
 
 export function formatDateTime(
-  value:
-    | string
-    | null
-    | undefined,
+  value: string | null | undefined,
 ) {
   if (!value) {
     return "—";
@@ -408,88 +442,44 @@ export function formatDateTime(
 
   const date = new Date(value);
 
-  if (
-    Number.isNaN(
-      date.getTime(),
-    )
-  ) {
+  if (Number.isNaN(date.getTime())) {
     return "—";
   }
 
-  return new Intl.DateTimeFormat(
-    "en-IN",
-    {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone:
-        "Asia/Kolkata",
-    },
-  ).format(date);
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  }).format(date);
 }
 
-export function formatStatus(
-  status: string,
-) {
+export function formatStatus(status: string) {
   return String(status ?? "")
-    .toLowerCase()
-    .split("_")
-    .filter(Boolean)
-    .map(
-      (part) =>
-        part
-          .charAt(0)
-          .toUpperCase() +
-        part.slice(1),
-    )
-    .join(" ");
-}
-
-export function formatAddress(
-  address:
-    | Partial<OrderAddress>
-    | null
-    | undefined,
-) {
-  if (!address) {
-    return "Address unavailable";
-  }
-
-  return [
-    address.house,
-    address.street,
-    address.locality,
-    address.landmark,
-    address.city,
-    address.state,
-    address.pincode,
-  ]
-    .map((value) =>
-      String(value ?? "").trim(),
-    )
-    .filter(Boolean)
-    .join(", ");
+    .trim()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (value) => value.toUpperCase());
 }
 
 export function dateFilterLabel(
-  value: DateFilter,
+  dateFilter: DateFilter,
 ) {
-  switch (value) {
+  switch (dateFilter) {
     case "TODAY":
-      return "Today";
+      return "Assigned today";
 
     case "YESTERDAY":
-      return "Yesterday";
+      return "Assigned yesterday";
 
     case "LAST_7_DAYS":
-      return "Last 7 Days";
+      return "Assigned in last 7 days";
 
     case "LAST_30_DAYS":
-      return "Last 30 Days";
+      return "Assigned in last 30 days";
 
     default:
-      return "All Time";
+      return "All assignment dates";
   }
 }

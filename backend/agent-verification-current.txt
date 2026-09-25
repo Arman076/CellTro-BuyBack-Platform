@@ -1,0 +1,2583 @@
+
+============================================================
+FILE: src\agent-order-verification\agent-order-verification.service.ts
+============================================================
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+//   TooManyRequestsException,
+  HttpException,
+  HttpStatus,
+  UnauthorizedException,
+} from '@nestjs/common';
+
+import {
+  createHmac,
+  randomInt,
+} from 'crypto';
+
+import {
+  OrderEventActorType,
+  OrderEventType,
+  OrderVerificationChannel,
+  OrderVerificationPurpose,
+  OrderVerificationStatus,
+} from '../generated/prisma/client.js';
+
+import {
+  PrismaService,
+} from '../prisma/prisma/prisma.service.js';
+
+import {
+  OtpService,
+} from '../otp/otp.service.js';
+
+import {
+  VendorEmailService,
+} from '../vendor-security/vendor-email.service.js';
+
+import {
+  OrderEventService,
+} from '../order-events/order-event.service.js';
+
+import type {
+  SendOrderVerificationDto,
+} from './dto/send-order-verification.dto.js';
+
+const EMAIL_OTP_EXPIRY_MINUTES = 5;
+const EMAIL_OTP_MAX_ATTEMPTS = 5;
+const RESEND_COOLDOWN_SECONDS = 60;
+
+type AgentIdentity = {
+  agentId: number;
+  vendorId: number;
+};
+
+@Injectable()
+export class AgentOrderVerificationService {
+  constructor(
+    private readonly prisma:
+      PrismaService,
+
+    private readonly otpService:
+      OtpService,
+
+    private readonly emailService:
+      VendorEmailService,
+
+    private readonly orderEvents:
+      OrderEventService,
+  ) {}
+
+  private normalizePhone(
+    value: unknown,
+  ) {
+    const digits =
+      String(value ?? '')
+        .replace(/\D/g, '');
+
+    const local =
+      digits.startsWith('91') &&
+      digits.length === 12
+        ? digits.slice(2)
+        : digits;
+
+    if (
+      !/^[6-9]\d{9}$/.test(
+        local,
+      )
+    ) {
+      throw new BadRequestException(
+        'Enter a valid Indian mobile number.',
+      );
+    }
+
+    return local;
+  }
+
+  private normalizeEmail(
+    value: unknown,
+  ) {
+    const email =
+      String(value ?? '')
+        .trim()
+        .toLowerCase();
+
+    if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        email,
+      )
+    ) {
+      throw new BadRequestException(
+        'Enter a valid email address.',
+      );
+    }
+
+    return email;
+  }
+
+  private detectChannel(
+    destination: string,
+  ) {
+    const value =
+      String(destination ?? '')
+        .trim();
+
+    if (value.includes('@')) {
+      return {
+        channel:
+          OrderVerificationChannel.EMAIL,
+        normalized:
+          this.normalizeEmail(value),
+      };
+    }
+
+    return {
+      channel:
+        OrderVerificationChannel.SMS,
+      normalized:
+        this.normalizePhone(value),
+    };
+  }
+
+  private maskPhone(
+    phone: string,
+  ) {
+    return `${phone.slice(0, 2)}******${phone.slice(-2)}`;
+  }
+
+  private maskEmail(
+    email: string,
+  ) {
+    const [
+      local,
+      domain,
+    ] =
+      email.split('@');
+
+    const first =
+      local.charAt(0);
+
+    return `${first}${'*'.repeat(
+      Math.max(
+        3,
+        local.length - 1,
+      ),
+    )}@${domain}`;
+  }
+
+  private otpSecret() {
+    const secret =
+      String(
+        process.env.ORDER_OTP_HMAC_SECRET ??
+        process.env.VENDOR_OTP_HMAC_SECRET ??
+        '',
+      ).trim();
+
+    if (!secret) {
+      throw new Error(
+        'ORDER_OTP_HMAC_SECRET is not configured',
+      );
+    }
+
+    return secret;
+  }
+
+  private hashEmailOtp(
+    challengeId: string,
+    purpose:
+      OrderVerificationPurpose,
+    email: string,
+    otp: string,
+  ) {
+    return createHmac(
+      'sha256',
+      this.otpSecret(),
+    )
+      .update(
+        [
+          'ORDER_VERIFICATION',
+          challengeId,
+          purpose,
+          email,
+          otp,
+        ].join(':'),
+      )
+      .digest('hex');
+  }
+
+  private async getOwnedOrder(
+    identity: AgentIdentity,
+    orderNumber: string,
+  ) {
+    const order =
+      await this.prisma.sellOrder.findFirst({
+        where: {
+          orderNumber,
+
+          currentVendorId:
+            identity.vendorId,
+
+          agentAssignments: {
+            some: {
+              agentId:
+                identity.agentId,
+
+              vendorId:
+                identity.vendorId,
+
+              unassignedAt:
+                null,
+            },
+          },
+        },
+
+        select: {
+          id: true,
+          orderNumber: true,
+          status: true,
+
+          customer: {
+            select: {
+              phone: true,
+              email: true,
+              normalizedEmail: true,
+            },
+          },
+
+          addressSnapshot: {
+            select: {
+              phone: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+    if (!order) {
+      throw new NotFoundException(
+        'Order not found.',
+      );
+    }
+
+    return order;
+  }
+
+  private ensurePurposeAllowed(
+    purpose:
+      OrderVerificationPurpose,
+    status: string,
+  ) {
+    if (
+      purpose ===
+        OrderVerificationPurpose.INSPECTION_START &&
+      ![
+        'PICKUP_REQUESTED',
+        'PICKUP_CONFIRMED',
+        'PICKUP_STARTED',
+      ].includes(status)
+    ) {
+      throw new ConflictException(
+        'Inspection verification is not allowed for the current order status.',
+      );
+    }
+    if (
+  (purpose === OrderVerificationPurpose.QUOTE_ACCEPT ||
+    purpose === OrderVerificationPurpose.QUOTE_REJECT) &&
+  status !== 'INSPECTION_COMPLETED'
+) {
+  throw new ConflictException(
+    'Quote decision verification is allowed only after inspection is completed.',
+  );
+
+}
+  }
+  
+  private verifyDestinationMatches(
+    order: Awaited<
+      ReturnType<
+        AgentOrderVerificationService['getOwnedOrder']
+      >
+    >,
+    channel:
+      OrderVerificationChannel,
+    normalizedDestination:
+      string,
+  ) {
+    if (
+      channel ===
+      OrderVerificationChannel.SMS
+    ) {
+      const allowedPhones =
+        new Set(
+          [
+            order.addressSnapshot?.phone,
+            order.customer.phone,
+          ]
+            .filter(Boolean)
+            .map((value) =>
+              this.normalizePhone(
+                value,
+              ),
+            ),
+        );
+
+      if (
+        !allowedPhones.has(
+          normalizedDestination,
+        )
+      ) {
+        throw new ForbiddenException(
+          'Mobile number does not match this order.',
+        );
+      }
+
+      return;
+    }
+
+    const allowedEmails =
+      new Set(
+        [
+          order.addressSnapshot?.email,
+          order.customer.normalizedEmail,
+          order.customer.email,
+        ]
+          .filter(Boolean)
+          .map((value) =>
+            this.normalizeEmail(
+              value,
+            ),
+          ),
+      );
+
+    if (
+      !allowedEmails.has(
+        normalizedDestination,
+      )
+    ) {
+      throw new ForbiddenException(
+        'Email address does not match this order.',
+      );
+    }
+  }
+
+  private async enforceCooldown(
+    orderId: string,
+    purpose:
+      OrderVerificationPurpose,
+  ) {
+    const latest =
+      await this.prisma.orderVerificationChallenge.findFirst({
+        where: {
+          orderId,
+          purpose,
+
+          status: {
+            in: [
+              OrderVerificationStatus.PENDING,
+              OrderVerificationStatus.VERIFIED,
+            ],
+          },
+        },
+
+        orderBy: {
+          createdAt: 'desc',
+        },
+
+        select: {
+          createdAt: true,
+        },
+      });
+
+    if (!latest) {
+      return;
+    }
+
+    const elapsed =
+      Date.now() -
+      latest.createdAt.getTime();
+
+    const cooldownMs =
+      RESEND_COOLDOWN_SECONDS *
+      1000;
+
+    if (
+      elapsed <
+      cooldownMs
+    ) {
+      const remaining =
+        Math.ceil(
+          (
+            cooldownMs -
+            elapsed
+          ) / 1000,
+        );
+
+      throw new HttpException(
+        `Please wait ${remaining} seconds before requesting another OTP.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  async send(
+    identity: AgentIdentity,
+    orderNumber: string,
+    body: SendOrderVerificationDto,
+  ) {
+    const order =
+      await this.getOwnedOrder(
+        identity,
+        orderNumber,
+      );
+
+    this.ensurePurposeAllowed(
+      body.purpose,
+      order.status,
+    );
+
+    const {
+      channel,
+      normalized,
+    } =
+      this.detectChannel(
+        body.destination,
+      );
+
+    this.verifyDestinationMatches(
+      order,
+      channel,
+      normalized,
+    );
+
+    await this.enforceCooldown(
+      order.id,
+      body.purpose,
+    );
+
+    const now =
+      new Date();
+
+    await this.prisma.orderVerificationChallenge.updateMany({
+      where: {
+        orderId:
+          order.id,
+
+        purpose:
+          body.purpose,
+
+        status:
+          OrderVerificationStatus.PENDING,
+      },
+
+      data: {
+        status:
+          OrderVerificationStatus.EXPIRED,
+      },
+    });
+
+    if (
+      channel ===
+      OrderVerificationChannel.SMS
+    ) {
+      const providerResult =
+        await this.otpService.sendOtp(
+          normalized,
+        );
+
+      const expiresAt =
+        new Date(
+          now.getTime() +
+          providerResult.expiresInSeconds *
+            1000,
+        );
+
+      const challenge =
+        await this.prisma.orderVerificationChallenge.create({
+          data: {
+            orderId:
+              order.id,
+
+            provider:
+              providerResult.provider,
+
+            purpose:
+              body.purpose,
+
+            channel,
+
+            otpHash:
+              null,
+
+            destinationMasked:
+              this.maskPhone(
+                normalized,
+              ),
+
+            expiresAt,
+          },
+
+          select: {
+            id: true,
+            purpose: true,
+            channel: true,
+            destinationMasked: true,
+            expiresAt: true,
+          },
+        });
+
+      await this.orderEvents.record({
+        orderId:
+          order.id,
+
+        eventType:
+          OrderEventType.VERIFICATION_SENT,
+
+        actorType:
+          OrderEventActorType.AGENT,
+
+        agentId:
+          identity.agentId,
+
+        metadata: {
+          purpose:
+            body.purpose,
+
+          channel:
+            'SMS',
+
+          challengeId:
+            challenge.id,
+        },
+      });
+
+      return {
+        challengeId:
+          challenge.id,
+
+        purpose:
+          challenge.purpose,
+
+        channel:
+          challenge.channel,
+
+        destinationMasked:
+          challenge.destinationMasked,
+
+        expiresAt:
+          challenge.expiresAt,
+
+        expiresInSeconds:
+          providerResult.expiresInSeconds,
+      };
+    }
+
+    const otp =
+      String(
+        randomInt(
+          100000,
+          1000000,
+        ),
+      );
+
+    const expiresAt =
+      new Date(
+        now.getTime() +
+        EMAIL_OTP_EXPIRY_MINUTES *
+          60 *
+          1000,
+      );
+
+    const challenge =
+      await this.prisma.orderVerificationChallenge.create({
+        data: {
+          orderId:
+            order.id,
+
+          provider:
+            'SMTP',
+
+          purpose:
+            body.purpose,
+
+          channel,
+
+          destinationMasked:
+            this.maskEmail(
+              normalized,
+            ),
+
+          expiresAt,
+
+          otpHash:
+            'PENDING',
+        },
+
+        select: {
+          id: true,
+        },
+      });
+
+    const otpHash =
+      this.hashEmailOtp(
+        challenge.id,
+        body.purpose,
+        normalized,
+        otp,
+      );
+
+    await this.prisma.orderVerificationChallenge.update({
+      where: {
+        id:
+          challenge.id,
+      },
+
+      data: {
+        otpHash,
+      },
+    });
+
+    try {
+      await this.emailService.sendOrderVerificationOtp({
+        email:
+          normalized,
+
+        otp,
+
+        purpose:
+          body.purpose,
+
+        orderNumber:
+          order.orderNumber,
+      });
+    } catch (error) {
+      await this.prisma.orderVerificationChallenge.update({
+        where: {
+          id:
+            challenge.id,
+        },
+
+        data: {
+          status:
+            OrderVerificationStatus.EXPIRED,
+        },
+      });
+
+      throw error;
+    }
+
+    await this.orderEvents.record({
+      orderId:
+        order.id,
+
+      eventType:
+        OrderEventType.VERIFICATION_SENT,
+
+      actorType:
+        OrderEventActorType.AGENT,
+
+      agentId:
+        identity.agentId,
+
+      metadata: {
+        purpose:
+          body.purpose,
+
+        channel:
+          'EMAIL',
+
+        challengeId:
+          challenge.id,
+      },
+    });
+
+    return {
+      challengeId:
+        challenge.id,
+
+      purpose:
+        body.purpose,
+
+      channel:
+        OrderVerificationChannel.EMAIL,
+
+      destinationMasked:
+        this.maskEmail(
+          normalized,
+        ),
+
+      expiresAt,
+
+      expiresInSeconds:
+        EMAIL_OTP_EXPIRY_MINUTES *
+        60,
+
+      ...(process.env.NODE_ENV !==
+      'production'
+        ? {
+            devOtp:
+              otp,
+          }
+        : {}),
+    };
+  }
+
+  async verify(
+    identity: AgentIdentity,
+    orderNumber: string,
+    challengeId: string,
+    otp: string,
+  ) {
+    const order =
+      await this.getOwnedOrder(
+        identity,
+        orderNumber,
+      );
+
+    const challenge =
+      await this.prisma.orderVerificationChallenge.findFirst({
+        where: {
+          id:
+            challengeId,
+
+          orderId:
+            order.id,
+        },
+      });
+
+    if (!challenge) {
+      throw new NotFoundException(
+        'Verification challenge not found.',
+      );
+    }
+
+    if (
+      challenge.status ===
+      OrderVerificationStatus.VERIFIED ||
+      challenge.status ===
+      OrderVerificationStatus.CONSUMED
+    ) {
+      return {
+        verified: true,
+        challengeId:
+          challenge.id,
+        purpose:
+          challenge.purpose,
+        channel:
+          challenge.channel,
+      };
+    }
+
+    if (
+      challenge.status ===
+        OrderVerificationStatus.EXPIRED ||
+      challenge.status ===
+        OrderVerificationStatus.LOCKED ||
+      challenge.expiresAt.getTime() <=
+        Date.now()
+    ) {
+      if (
+        challenge.status ===
+        OrderVerificationStatus.PENDING
+      ) {
+        await this.prisma.orderVerificationChallenge.update({
+          where: {
+            id:
+              challenge.id,
+          },
+
+          data: {
+            status:
+              OrderVerificationStatus.EXPIRED,
+          },
+        });
+      }
+
+      throw new UnauthorizedException(
+        'OTP has expired. Request a new OTP.',
+      );
+    }
+
+    this.ensurePurposeAllowed(
+      challenge.purpose,
+      order.status,
+    );
+
+    if (
+      challenge.channel ===
+      OrderVerificationChannel.SMS
+    ) {
+      const phone =
+        this.normalizePhone(
+          order.addressSnapshot?.phone ??
+            order.customer.phone,
+        );
+
+      try {
+        await this.otpService.verifyOtp(
+          phone,
+          otp,
+        );
+      } catch (error) {
+        const updated =
+          await this.prisma.orderVerificationChallenge.update({
+            where: {
+              id:
+                challenge.id,
+            },
+
+            data: {
+              attempts: {
+                increment: 1,
+              },
+            },
+
+            select: {
+              attempts: true,
+            },
+          });
+
+        if (
+          updated.attempts >=
+          EMAIL_OTP_MAX_ATTEMPTS
+        ) {
+          await this.prisma.orderVerificationChallenge.update({
+            where: {
+              id:
+                challenge.id,
+            },
+
+            data: {
+              status:
+                OrderVerificationStatus.LOCKED,
+            },
+          });
+        }
+
+        throw error;
+      }
+    } else {
+      const email =
+        this.normalizeEmail(
+          order.addressSnapshot?.email ??
+            order.customer.normalizedEmail ??
+            order.customer.email,
+        );
+
+      const expected =
+        this.hashEmailOtp(
+          challenge.id,
+          challenge.purpose,
+          email,
+          String(otp),
+        );
+
+      if (
+        expected !==
+        challenge.otpHash
+      ) {
+        const updated =
+          await this.prisma.orderVerificationChallenge.update({
+            where: {
+              id:
+                challenge.id,
+            },
+
+            data: {
+              attempts: {
+                increment: 1,
+              },
+            },
+
+            select: {
+              attempts: true,
+            },
+          });
+
+        if (
+          updated.attempts >=
+          EMAIL_OTP_MAX_ATTEMPTS
+        ) {
+          await this.prisma.orderVerificationChallenge.update({
+            where: {
+              id:
+                challenge.id,
+            },
+
+            data: {
+              status:
+                OrderVerificationStatus.LOCKED,
+            },
+          });
+        }
+
+        throw new UnauthorizedException(
+          'Invalid OTP.',
+        );
+      }
+    }
+
+    const now =
+      new Date();
+
+    const verified =
+      await this.prisma.orderVerificationChallenge.update({
+        where: {
+          id:
+            challenge.id,
+        },
+
+        data: {
+          status:
+            OrderVerificationStatus.VERIFIED,
+
+          verifiedAt:
+            now,
+        },
+
+        select: {
+          id: true,
+          purpose: true,
+          channel: true,
+          verifiedAt: true,
+        },
+      });
+
+    await this.orderEvents.record({
+      orderId:
+        order.id,
+
+      eventType:
+        OrderEventType.VERIFICATION_VERIFIED,
+
+      actorType:
+        OrderEventActorType.AGENT,
+
+      agentId:
+        identity.agentId,
+
+      metadata: {
+        purpose:
+          verified.purpose,
+
+        channel:
+          verified.channel,
+
+        challengeId:
+          verified.id,
+      },
+    });
+
+    return {
+      verified: true,
+
+      challengeId:
+        verified.id,
+
+      purpose:
+        verified.purpose,
+
+      channel:
+        verified.channel,
+
+      verifiedAt:
+        verified.verifiedAt,
+    };
+  }
+}
+
+============================================================
+FILE: src\agent-order-verification\agent-order-verification.controller.ts
+============================================================
+
+============================================================
+FILE: src\agent-order-verification\agent-order-verification.module.ts
+============================================================
+
+============================================================
+FILE: src\agent-order-verification\dto\send-order-verification.dto.ts
+============================================================
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsString,
+  MaxLength,
+} from 'class-validator';
+
+import {
+  OrderVerificationPurpose,
+} from '../../generated/prisma/client.js';
+
+export class SendOrderVerificationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(254)
+  destination!: string;
+
+  @IsEnum(
+    OrderVerificationPurpose,
+  )
+  purpose!: OrderVerificationPurpose;
+}
+
+============================================================
+FILE: src\agent-order-verification\dto\verify-order-verification.dto.ts
+============================================================
+import {
+  IsNotEmpty,
+  IsString,
+  Matches,
+  MaxLength,
+} from 'class-validator';
+
+export class VerifyOrderVerificationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  challengeId!: string;
+
+  @IsString()
+  @Matches(
+    /^\d{4,9}$/,
+    {
+      message:
+        'Enter a valid OTP.',
+    },
+  )
+  otp!: string;
+}
+
+============================================================
+FILE: src\order-events\order-event.service.ts
+============================================================
+import {
+  Injectable,
+} from '@nestjs/common';
+
+import type {
+  OrderEventActorType,
+  OrderEventType,
+  Prisma,
+} from '../generated/prisma/client.js';
+
+import {
+  PrismaService,
+} from '../prisma/prisma/prisma.service.js';
+
+type RecordOrderEventInput = {
+  orderId: string;
+  eventType: OrderEventType;
+  actorType: OrderEventActorType;
+  agentId?: number | null;
+  metadata?: Prisma.InputJsonValue;
+};
+
+@Injectable()
+export class OrderEventService {
+  constructor(
+    private readonly prisma: PrismaService,
+  ) {}
+
+  async record(
+    input: RecordOrderEventInput,
+  ) {
+    return this.prisma.orderEvent.create({
+      data: {
+        orderId: input.orderId,
+        eventType: input.eventType,
+        actorType: input.actorType,
+        agentId: input.agentId ?? null,
+        metadata:
+          input.metadata ??
+          undefined,
+      },
+
+      select: {
+        id: true,
+        eventType: true,
+        actorType: true,
+        agentId: true,
+        metadata: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  async getTimeline(
+    orderId: string,
+  ) {
+    return this.prisma.orderEvent.findMany({
+      where: {
+        orderId,
+      },
+
+      select: {
+        id: true,
+        eventType: true,
+        actorType: true,
+        agentId: true,
+        metadata: true,
+        createdAt: true,
+
+        agent: {
+          select: {
+            agentCode: true,
+            fullName: true,
+          },
+        },
+      },
+
+      orderBy: [
+        {
+          createdAt: 'asc',
+        },
+        {
+          id: 'asc',
+        },
+      ],
+    });
+  }
+}
+
+============================================================
+FILE: src\order-events\order-event.module.ts
+============================================================
+import {
+  Module,
+} from '@nestjs/common';
+
+import {
+  PrismaModule,
+} from '../prisma/prisma.module.js';
+
+import {
+  OrderEventService,
+} from './order-event.service.js';
+
+@Module({
+  imports: [
+    PrismaModule,
+  ],
+
+  providers: [
+    OrderEventService,
+  ],
+
+  exports: [
+    OrderEventService,
+  ],
+})
+export class OrderEventModule {}
+
+============================================================
+FILE: src\otp\contracts\otp-provider.ts
+============================================================
+export type OtpSendResult = {
+  provider: "MSG91";
+  expiresInSeconds: number;
+  providerMessage?: string | null;
+};
+
+export interface OtpProvider {
+  sendOtp(phone: string): Promise<OtpSendResult>;
+  verifyOtp(phone: string, otp: string): Promise<void>;
+}
+
+export const OTP_PROVIDER = Symbol("OTP_PROVIDER");
+
+============================================================
+FILE: src\otp\providers\msg91-otp.provider.ts
+============================================================
+import {
+  BadGatewayException,
+  BadRequestException,
+  Injectable,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from "@nestjs/common";
+
+import type {
+  OtpProvider,
+  OtpSendResult,
+} from "../contracts/otp-provider.js";
+
+type Msg91Response = {
+  type?: string;
+  message?: string;
+  [key: string]: unknown;
+};
+
+@Injectable()
+export class Msg91OtpProvider implements OtpProvider {
+  private normalizeIndianPhone(value: unknown) {
+    const digits = String(value ?? "").replace(/\D/g, "");
+    const local =
+      digits.startsWith("91") && digits.length === 12
+        ? digits.slice(2)
+        : digits;
+
+    if (!/^[6-9]\d{9}$/.test(local)) {
+      throw new BadRequestException(
+        "Enter a valid 10-digit Indian mobile number.",
+      );
+    }
+
+    return {
+      local,
+      international: `91${local}`,
+    };
+  }
+
+  private getConfig() {
+    const authKey = String(process.env.MSG91_AUTH_KEY ?? "").trim();
+    const templateId = String(process.env.MSG91_TEMPLATE_ID ?? "").trim();
+
+    if (!authKey || !templateId) {
+      throw new ServiceUnavailableException(
+        "MSG91 OTP provider is not configured.",
+      );
+    }
+
+    const expiryRaw = Number(
+      process.env.MSG91_OTP_EXPIRY_MINUTES ?? 5,
+    );
+    const lengthRaw = Number(
+      process.env.MSG91_OTP_LENGTH ?? 6,
+    );
+
+    return {
+      authKey,
+      templateId,
+      expiryMinutes:
+        Number.isFinite(expiryRaw) && expiryRaw >= 1
+          ? Math.floor(expiryRaw)
+          : 5,
+      otpLength:
+        Number.isFinite(lengthRaw) &&
+        lengthRaw >= 4 &&
+        lengthRaw <= 9
+          ? Math.floor(lengthRaw)
+          : 6,
+    };
+  }
+
+  private async readResponse(response: Response): Promise<Msg91Response> {
+    const data = (await response.json().catch(() => ({}))) as Msg91Response;
+
+    if (!response.ok) {
+      throw new BadGatewayException(
+        String(data?.message || "MSG91 request failed."),
+      );
+    }
+
+    return data;
+  }
+
+  async sendOtp(phone: string): Promise<OtpSendResult> {
+    const { international } = this.normalizeIndianPhone(phone);
+    const {
+      authKey,
+      templateId,
+      expiryMinutes,
+      otpLength,
+    } = this.getConfig();
+
+    const url = new URL("https://control.msg91.com/api/v5/otp");
+    url.searchParams.set("template_id", templateId);
+    url.searchParams.set("mobile", international);
+    url.searchParams.set("otp_expiry", String(expiryMinutes));
+    url.searchParams.set("otp_length", String(otpLength));
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        authkey: authKey,
+      },
+      body: JSON.stringify({}),
+    });
+
+    const data = await this.readResponse(response);
+
+    if (String(data?.type ?? "").toLowerCase() !== "success") {
+      throw new BadGatewayException(
+        String(data?.message || "Unable to send OTP."),
+      );
+    }
+
+    return {
+      provider: "MSG91",
+      expiresInSeconds: expiryMinutes * 60,
+      providerMessage: data?.message ? String(data.message) : null,
+    };
+  }
+
+  async verifyOtp(phone: string, otp: string) {
+    const { international } = this.normalizeIndianPhone(phone);
+    const cleanOtp = String(otp ?? "").replace(/\D/g, "");
+
+    if (!/^\d{4,9}$/.test(cleanOtp)) {
+      throw new BadRequestException("Enter a valid OTP.");
+    }
+
+    const { authKey } = this.getConfig();
+
+    const url = new URL(
+      "https://control.msg91.com/api/v5/otp/verify",
+    );
+    url.searchParams.set("otp", cleanOtp);
+    url.searchParams.set("mobile", international);
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        authkey: authKey,
+      },
+    });
+
+    const data = await this.readResponse(response);
+    const message = String(data?.message ?? "");
+    const lower = message.toLowerCase();
+
+    if (
+      !lower.includes("verified") ||
+      lower.includes("invalid") ||
+      lower.includes("expired")
+    ) {
+      throw new UnauthorizedException(
+        message || "Invalid or expired OTP.",
+      );
+    }
+  }
+}
+
+============================================================
+FILE: src\otp\otp.service.ts
+============================================================
+import { Inject, Injectable } from "@nestjs/common";
+import { OTP_PROVIDER } from "./contracts/otp-provider.js";
+import type { OtpProvider } from "./contracts/otp-provider.js";
+
+@Injectable()
+export class OtpService {
+  constructor(
+    @Inject(OTP_PROVIDER)
+    private readonly provider: OtpProvider,
+  ) {}
+
+  sendOtp(phone: string) {
+    return this.provider.sendOtp(phone);
+  }
+
+  verifyOtp(phone: string, otp: string) {
+    return this.provider.verifyOtp(phone, otp);
+  }
+}
+
+============================================================
+FILE: src\otp\otp.module.ts
+============================================================
+import { Module } from "@nestjs/common";
+import { OTP_PROVIDER } from "./contracts/otp-provider.js";
+import { Msg91OtpProvider } from "./providers/msg91-otp.provider.js";
+import { OtpService } from "./otp.service.js";
+
+/*
+ * PREPARED BUT NOT ACTIVE YET.
+ *
+ * Do NOT import this module into AppModule until the MSG91 account,
+ * Authkey and OTP template are ready.
+ */
+@Module({
+  providers: [
+    Msg91OtpProvider,
+    {
+      provide: OTP_PROVIDER,
+      useExisting: Msg91OtpProvider,
+    },
+    OtpService,
+  ],
+  exports: [OtpService],
+})
+export class OtpModule {}
+
+============================================================
+FILE: src\vendor-security\vendor-email.service.ts
+============================================================
+import {
+  Injectable,
+  ServiceUnavailableException,
+} from "@nestjs/common";
+
+import nodemailer from "nodemailer";
+
+type VendorApprovalEmailInput = {
+  email: string;
+  contactName: string;
+  vendorCode: string;
+  temporaryPassword: string;
+  expiresInHours: number;
+};
+
+type VendorRejectionEmailInput = {
+  email: string;
+  contactName: string;
+  reason: string;
+};
+
+@Injectable()
+export class VendorEmailService {
+  private createTransporter() {
+    const host =
+      process.env.SMTP_HOST?.trim();
+
+    const port = Number(
+      process.env.SMTP_PORT ?? "465",
+    );
+
+    const user =
+      process.env.SMTP_USER?.trim();
+
+    const password =
+      process.env.SMTP_PASSWORD;
+
+    if (
+      !host ||
+      !Number.isInteger(port) ||
+      port <= 0 ||
+      port > 65535 ||
+      !user ||
+      !password
+    ) {
+      throw new ServiceUnavailableException(
+        "Email service is not configured",
+      );
+    }
+
+    return nodemailer.createTransport({
+      host,
+      port,
+
+      secure:
+        port === 465,
+
+      auth: {
+        user,
+        pass: password,
+      },
+
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+    });
+  }
+
+  private getFromAddress() {
+    const from =
+      process.env.SMTP_FROM?.trim();
+
+    if (!from) {
+      throw new ServiceUnavailableException(
+        "SMTP_FROM is not configured",
+      );
+    }
+
+    return from;
+  }
+
+  private escapeHtml(
+    value: string,
+  ) {
+    return value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  private logEmailFailure(
+    operation: string,
+    error: unknown,
+  ) {
+    if (
+      process.env.NODE_ENV ===
+      "production"
+    ) {
+      return;
+    }
+
+    const smtpError =
+      error as {
+        code?: string;
+        responseCode?: number;
+        message?: string;
+      };
+
+    /*
+     * Never log OTPs, passwords,
+     * SMTP credentials or email body.
+     */
+    console.error(
+      `[VendorEmail] ${operation} failure:`,
+      {
+        code:
+          smtpError.code,
+
+        responseCode:
+          smtpError.responseCode,
+
+        message:
+          smtpError.message,
+      },
+    );
+  }
+
+  async sendSignupOtp(
+    email: string,
+    otp: string,
+  ): Promise<void> {
+    const from =
+      this.getFromAddress();
+
+    const transporter =
+      this.createTransporter();
+
+    try {
+      await transporter.sendMail({
+        from,
+        to: email,
+
+        subject:
+          "Verify your Celltro vendor email",
+
+        text:
+          `Your Celltro verification code is ${otp}. ` +
+          "This code expires in 10 minutes. " +
+          "Do not share this code with anyone.",
+
+        html: `
+          <div
+            style="
+              max-width:520px;
+              margin:0 auto;
+              padding:32px;
+              font-family:Arial,sans-serif;
+              color:#0f172a;
+            "
+          >
+            <div
+              style="
+                font-size:24px;
+                font-weight:800;
+                color:#0f2b5b;
+                margin-bottom:28px;
+              "
+            >
+              Celltro
+            </div>
+
+            <h2
+              style="
+                margin:0 0 12px;
+                color:#0f2b5b;
+              "
+            >
+              Verify your email
+            </h2>
+
+            <p
+              style="
+                color:#64748b;
+                line-height:1.6;
+              "
+            >
+              Use this verification code to
+              continue your Celltro vendor
+              registration.
+            </p>
+
+            <div
+              style="
+                margin:28px 0;
+                padding:20px;
+                border-radius:12px;
+                background:#f1f5f9;
+                text-align:center;
+                font-size:32px;
+                font-weight:800;
+                letter-spacing:8px;
+                color:#1265df;
+              "
+            >
+              ${this.escapeHtml(otp)}
+            </div>
+
+            <p
+              style="
+                color:#64748b;
+                font-size:13px;
+              "
+            >
+              This code expires in
+              <strong>10 minutes</strong>.
+            </p>
+
+            <p
+              style="
+                color:#94a3b8;
+                font-size:12px;
+                line-height:1.5;
+              "
+            >
+              Never share this OTP with anyone.
+              Celltro will never ask you to share
+              your verification code.
+            </p>
+          </div>
+        `,
+      });
+    } catch (error) {
+      this.logEmailFailure(
+        "signup OTP email",
+        error,
+      );
+
+      throw new ServiceUnavailableException(
+        "Unable to send verification email. Please try again.",
+      );
+    }
+  }
+
+  async sendAgentSignupOtp(
+  email: string,
+  otp: string,
+): Promise<void> {
+  const from =
+    this.getFromAddress();
+
+  const transporter =
+    this.createTransporter();
+
+  try {
+    await transporter.sendMail({
+      from,
+      to: email,
+
+      subject:
+        'Verify your Celltro agent email',
+
+      text:
+        `Your Celltro agent verification code is ${otp}. ` +
+        'This code expires in 10 minutes. ' +
+        'Do not share this code with anyone.',
+
+      html: `
+        <div
+          style="
+            max-width:520px;
+            margin:0 auto;
+            padding:32px;
+            font-family:Arial,sans-serif;
+            color:#0f172a;
+          "
+        >
+          <div
+            style="
+              font-size:24px;
+              font-weight:800;
+              color:#0f2b5b;
+              margin-bottom:28px;
+            "
+          >
+            Celltro
+          </div>
+
+          <h2
+            style="
+              margin:0 0 12px;
+              color:#0f2b5b;
+            "
+          >
+            Verify your agent email
+          </h2>
+
+          <p
+            style="
+              color:#64748b;
+              line-height:1.6;
+            "
+          >
+            Use this verification code to
+            continue your Celltro agent
+            registration.
+          </p>
+
+          <div
+            style="
+              margin:28px 0;
+              padding:20px;
+              border-radius:12px;
+              background:#f1f5f9;
+              text-align:center;
+              font-size:32px;
+              font-weight:800;
+              letter-spacing:8px;
+              color:#1265df;
+            "
+          >
+            ${this.escapeHtml(otp)}
+          </div>
+
+          <p
+            style="
+              color:#64748b;
+              font-size:13px;
+            "
+          >
+            This code expires in
+            <strong>10 minutes</strong>.
+          </p>
+
+          <p
+            style="
+              color:#94a3b8;
+              font-size:12px;
+              line-height:1.5;
+            "
+          >
+            Never share this OTP with anyone.
+            Celltro will never ask you to share
+            your verification code.
+          </p>
+        </div>
+      `,
+    });
+  } catch (error) {
+    this.logEmailFailure(
+      'agent signup OTP email',
+      error,
+    );
+
+    throw new ServiceUnavailableException(
+      'Unable to send verification email. Please try again.',
+    );
+  }
+}
+
+async sendOrderVerificationOtp(
+  input: {
+    email: string;
+    otp: string;
+    purpose:
+      | 'INSPECTION_START'
+      | 'QUOTE_ACCEPT'
+      | 'QUOTE_REJECT';
+    orderNumber: string;
+  },
+): Promise<void> {
+  const from =
+    this.getFromAddress();
+
+  const transporter =
+    this.createTransporter();
+
+  const purposeText = {
+    INSPECTION_START:
+      'start the device inspection',
+    QUOTE_ACCEPT:
+      'accept the final Celltro quote',
+    QUOTE_REJECT:
+      'reject the final Celltro quote',
+  }[input.purpose];
+
+  const safeOtp =
+    this.escapeHtml(
+      input.otp,
+    );
+
+  const safeOrderNumber =
+    this.escapeHtml(
+      input.orderNumber,
+    );
+
+  const safePurpose =
+    this.escapeHtml(
+      purposeText,
+    );
+
+  try {
+    await transporter.sendMail({
+      from,
+      to: input.email,
+
+      subject:
+        `Celltro verification code for ${input.orderNumber}`,
+
+      text:
+        `Your Celltro verification code is ${input.otp}. ` +
+        `Use this code to ${purposeText} for order ${input.orderNumber}. ` +
+        'This code expires in 5 minutes. ' +
+        'Do not share this code unless you are completing the Celltro pickup process.',
+
+      html: `
+        <div
+          style="
+            max-width:520px;
+            margin:0 auto;
+            padding:32px;
+            font-family:Arial,sans-serif;
+            color:#0f172a;
+          "
+        >
+          <div
+            style="
+              font-size:24px;
+              font-weight:800;
+              color:#0f2b5b;
+              margin-bottom:28px;
+            "
+          >
+            Celltro
+          </div>
+
+          <h2
+            style="
+              margin:0 0 12px;
+              color:#0f2b5b;
+            "
+          >
+            Verify your pickup action
+          </h2>
+
+          <p
+            style="
+              color:#64748b;
+              line-height:1.6;
+            "
+          >
+            Use the verification code below to
+            ${safePurpose}.
+          </p>
+
+          <div
+            style="
+              margin:20px 0;
+              padding:14px;
+              border-radius:10px;
+              background:#f8fafc;
+              color:#475569;
+              font-size:14px;
+            "
+          >
+            Order:
+            <strong>
+              ${safeOrderNumber}
+            </strong>
+          </div>
+
+          <div
+            style="
+              margin:28px 0;
+              padding:20px;
+              border-radius:12px;
+              background:#f1f5f9;
+              text-align:center;
+              font-size:32px;
+              font-weight:800;
+              letter-spacing:8px;
+              color:#1265df;
+            "
+          >
+            ${safeOtp}
+          </div>
+
+          <p
+            style="
+              color:#64748b;
+              font-size:13px;
+            "
+          >
+            This code expires in
+            <strong>5 minutes</strong>.
+          </p>
+
+          <p
+            style="
+              color:#94a3b8;
+              font-size:12px;
+              line-height:1.5;
+            "
+          >
+            Never share this OTP outside the
+            Celltro pickup verification process.
+          </p>
+        </div>
+      `,
+    });
+  } catch (error) {
+    this.logEmailFailure(
+      'order verification OTP email',
+      error,
+    );
+
+    throw new ServiceUnavailableException(
+      'Unable to send verification email. Please try again.',
+    );
+  }
+}
+
+  async sendVendorApproval(
+    input: VendorApprovalEmailInput,
+  ): Promise<void> {
+    const from =
+      this.getFromAddress();
+
+    const transporter =
+      this.createTransporter();
+
+    const portalUrl =
+      process.env.VENDOR_PORTAL_URL?.trim() ??
+      "";
+
+    const safeContactName =
+      this.escapeHtml(
+        input.contactName,
+      );
+
+    const safeVendorCode =
+      this.escapeHtml(
+        input.vendorCode,
+      );
+
+    const safeTemporaryPassword =
+      this.escapeHtml(
+        input.temporaryPassword,
+      );
+
+    const safePortalUrl =
+      this.escapeHtml(
+        portalUrl,
+      );
+
+    try {
+      await transporter.sendMail({
+        from,
+        to: input.email,
+
+        subject:
+          "Your Celltro vendor application has been approved",
+
+        text:
+          `Hello ${input.contactName},\n\n` +
+          "Your Celltro vendor application has been approved.\n\n" +
+          `Vendor ID / Username: ${input.vendorCode}\n` +
+          `Temporary Password: ${input.temporaryPassword}\n` +
+          (
+            portalUrl
+              ? `Vendor Portal: ${portalUrl}\n`
+              : ""
+          ) +
+          `\nThis temporary password expires in ${input.expiresInHours} hours.\n` +
+          "You must change your temporary password after signing in.\n\n" +
+          "Do not share your password with anyone.",
+
+        html: `
+          <div
+            style="
+              max-width:560px;
+              margin:0 auto;
+              padding:32px;
+              font-family:Arial,sans-serif;
+              color:#0f172a;
+            "
+          >
+            <div
+              style="
+                font-size:24px;
+                font-weight:800;
+                color:#0f2b5b;
+                margin-bottom:28px;
+              "
+            >
+              Celltro
+            </div>
+
+            <h2
+              style="
+                margin:0 0 12px;
+                color:#0f2b5b;
+              "
+            >
+              Vendor application approved
+            </h2>
+
+            <p
+              style="
+                line-height:1.6;
+                color:#475569;
+              "
+            >
+              Hello ${safeContactName},
+            </p>
+
+            <p
+              style="
+                line-height:1.6;
+                color:#475569;
+              "
+            >
+              Your Celltro vendor application
+              has been approved.
+            </p>
+
+            <div
+              style="
+                margin:24px 0;
+                padding:20px;
+                border-radius:12px;
+                background:#f1f5f9;
+              "
+            >
+              <p
+                style="
+                  margin:0 0 16px;
+                "
+              >
+                <strong>
+                  Vendor ID / Username
+                </strong>
+                <br />
+                ${safeVendorCode}
+              </p>
+
+              <p
+                style="
+                  margin:0;
+                "
+              >
+                <strong>
+                  Temporary Password
+                </strong>
+                <br />
+                ${safeTemporaryPassword}
+              </p>
+            </div>
+
+            ${
+              portalUrl
+                ? `
+                  <p
+                    style="
+                      margin:24px 0;
+                    "
+                  >
+                    <a
+                      href="${safePortalUrl}"
+                      style="
+                        display:inline-block;
+                        padding:12px 20px;
+                        border-radius:8px;
+                        background:#1265df;
+                        color:#ffffff;
+                        text-decoration:none;
+                        font-weight:700;
+                      "
+                    >
+                      Open Vendor Portal
+                    </a>
+                  </p>
+                `
+                : ""
+            }
+
+            <p
+              style="
+                line-height:1.6;
+                color:#64748b;
+                font-size:13px;
+              "
+            >
+              This temporary password expires in
+              <strong>
+                ${input.expiresInHours} hours
+              </strong>.
+              You must create a new password
+              after signing in.
+            </p>
+
+            <p
+              style="
+                color:#94a3b8;
+                font-size:12px;
+                line-height:1.5;
+              "
+            >
+              Never share your password with
+              anyone.
+            </p>
+          </div>
+        `,
+      });
+    } catch (error) {
+      this.logEmailFailure(
+        "vendor approval email",
+        error,
+      );
+
+      throw new ServiceUnavailableException(
+        "Unable to send vendor approval email.",
+      );
+    }
+  }
+
+  async sendVendorRejection(
+    input: VendorRejectionEmailInput,
+  ): Promise<void> {
+    const from =
+      this.getFromAddress();
+
+    const transporter =
+      this.createTransporter();
+
+    const safeContactName =
+      this.escapeHtml(
+        input.contactName,
+      );
+
+    const safeReason =
+      this.escapeHtml(
+        input.reason,
+      );
+
+    try {
+      await transporter.sendMail({
+        from,
+        to: input.email,
+
+        subject:
+          "Update on your Celltro vendor application",
+
+        text:
+          `Hello ${input.contactName},\n\n` +
+          "Your Celltro vendor application has been reviewed and was not approved.\n\n" +
+          `Reason: ${input.reason}\n\n` +
+          "Celltro",
+
+        html: `
+          <div
+            style="
+              max-width:560px;
+              margin:0 auto;
+              padding:32px;
+              font-family:Arial,sans-serif;
+              color:#0f172a;
+            "
+          >
+            <div
+              style="
+                font-size:24px;
+                font-weight:800;
+                color:#0f2b5b;
+                margin-bottom:28px;
+              "
+            >
+              Celltro
+            </div>
+
+            <h2
+              style="
+                margin:0 0 12px;
+                color:#0f2b5b;
+              "
+            >
+              Vendor application update
+            </h2>
+
+            <p
+              style="
+                line-height:1.6;
+                color:#475569;
+              "
+            >
+              Hello ${safeContactName},
+            </p>
+
+            <p
+              style="
+                line-height:1.6;
+                color:#475569;
+              "
+            >
+              Your Celltro vendor application
+              has been reviewed and was not
+              approved.
+            </p>
+
+            <div
+              style="
+                margin:24px 0;
+                padding:20px;
+                border-radius:12px;
+                background:#f8fafc;
+              "
+            >
+              <strong>
+                Reason
+              </strong>
+
+              <p
+                style="
+                  margin:8px 0 0;
+                  line-height:1.6;
+                  color:#475569;
+                "
+              >
+                ${safeReason}
+              </p>
+            </div>
+          </div>
+        `,
+      });
+    } catch (error) {
+      this.logEmailFailure(
+        "vendor rejection email",
+        error,
+      );
+
+      throw new ServiceUnavailableException(
+        "Unable to send vendor rejection email.",
+      );
+    }
+  }
+}
+
+============================================================
+FILE: src\agent-session\agent-session.guard.ts
+============================================================
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+} from '@nestjs/common';
+
+import type { Request } from 'express';
+
+import {
+  AgentSessionService,
+  AuthenticatedAgentSession,
+} from './agent-session.service.js';
+
+export type AgentAuthenticatedRequest =
+  Request & {
+    agentSession?: AuthenticatedAgentSession;
+  };
+
+@Injectable()
+export class AgentSessionGuard
+  implements CanActivate
+{
+  constructor(
+    private readonly sessionService:
+      AgentSessionService,
+  ) {}
+
+  async canActivate(
+    context: ExecutionContext,
+  ): Promise<boolean> {
+    const request =
+      context
+        .switchToHttp()
+        .getRequest<AgentAuthenticatedRequest>();
+
+    const token =
+      this.getSessionToken(request);
+
+    request.agentSession =
+      await this.sessionService.getSession(
+        token,
+      );
+
+    return true;
+  }
+
+  private getSessionToken(
+    request: Request,
+  ): string | undefined {
+    const cookieName =
+      this.sessionService.getCookieName();
+
+    const cookieToken =
+      request.cookies?.[
+        cookieName
+      ] as string | undefined;
+
+    if (cookieToken) {
+      return cookieToken;
+    }
+
+    /*
+     * Safe fallback in case cookie-parser
+     * is unavailable on a specific runtime.
+     */
+    const cookieHeader =
+      request.headers.cookie;
+
+    if (!cookieHeader) {
+      return undefined;
+    }
+
+    for (
+      const cookie of
+      cookieHeader.split(';')
+    ) {
+      const separatorIndex =
+        cookie.indexOf('=');
+
+      if (separatorIndex <= 0) {
+        continue;
+      }
+
+      const key = cookie
+        .slice(0, separatorIndex)
+        .trim();
+
+      if (key !== cookieName) {
+        continue;
+      }
+
+      const value = cookie
+        .slice(separatorIndex + 1)
+        .trim();
+
+      try {
+        return decodeURIComponent(
+          value,
+        );
+      } catch {
+        return value;
+      }
+    }
+
+    return undefined;
+  }
+}
+
+============================================================
+FILE: src\agent-orders\agent-orders.controller.ts
+============================================================
+import {
+  Controller,
+  Get,
+  Param,
+  Query,
+  Req,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
+
+import {
+  AgentSessionGuard,
+} from '../agent-session/agent-session.guard.js';
+
+import type {
+  AgentAuthenticatedRequest,
+} from '../agent-session/agent-session.guard.js';
+
+import {
+  AgentOrdersService,
+} from './agent-orders.service.js';
+
+@Controller('agent-orders')
+@UseGuards(AgentSessionGuard)
+export class AgentOrdersController {
+  constructor(
+    private readonly agentOrdersService:
+      AgentOrdersService,
+  ) {}
+
+  @Get()
+  async listOrders(
+    @Req()
+    request: AgentAuthenticatedRequest,
+
+    @Query('search')
+    search?: string,
+
+    @Query('statusGroup')
+    statusGroup?: string,
+
+    @Query('dateFilter')
+    dateFilter?: string,
+
+    @Query('page')
+    page?: string,
+
+    @Query('limit')
+    limit?: string,
+  ) {
+    const session =
+      request.agentSession;
+
+    if (!session) {
+      throw new UnauthorizedException(
+        'Agent session is required.',
+      );
+    }
+
+    return this.agentOrdersService.listOrders(
+      session.agentId,
+      session.vendorId,
+      {
+        search,
+        statusGroup,
+        dateFilter,
+        page,
+        limit,
+      },
+    );
+  }
+
+  @Get(':orderNumber')
+  async getOrder(
+    @Req()
+    request: AgentAuthenticatedRequest,
+
+    @Param('orderNumber')
+    orderNumber: string,
+  ) {
+    const session =
+      request.agentSession;
+
+    if (!session) {
+      throw new UnauthorizedException(
+        'Agent session is required.',
+      );
+    }
+
+    return this.agentOrdersService.getOrder(
+      session.agentId,
+      session.vendorId,
+      orderNumber,
+    );
+  }
+}
+
+============================================================
+FILE: src\agent-orders\agent-orders.module.ts
+============================================================
+import {
+  Module,
+} from '@nestjs/common';
+
+import {
+  PrismaModule,
+} from '../prisma/prisma.module.js';
+
+import {
+  AgentSessionModule,
+} from '../agent-session/agent-session.module.js';
+
+import {
+  AgentOrdersController,
+} from './agent-orders.controller.js';
+
+import {
+  AgentOrdersService,
+} from './agent-orders.service.js';
+
+@Module({
+  imports: [
+    PrismaModule,
+    AgentSessionModule,
+  ],
+
+  controllers: [
+    AgentOrdersController,
+  ],
+
+  providers: [
+    AgentOrdersService,
+  ],
+})
+export class AgentOrdersModule {}
+
+============================================================
+FILE: src\app.module.ts
+============================================================
+import { Module } from '@nestjs/common';
+
+import { AppController } from './app.controller.js';
+import { AppService } from './app.service.js';
+
+import { PrismaModule } from './prisma/prisma.module.js';
+import { CategoriesModule } from './categories/categories.module.js';
+import { BrandsModule } from './brands/brands.module.js';
+import { ProductsModule } from './products/products.module.js';
+import { ProductSeriesModule } from './product-series/product-series.module.js';
+import { VariantsModule } from './variants/variants.module.js';
+import { VariantAttributesModule } from './variant-attributes/variant-attributes.module.js';
+import { CatalogueImportModule } from './catalogue-import/catalogue-import.module.js';
+import { QuestionnaireModule } from './questionnaire/questionnaire.module.js';
+import { DashboardModule } from './dashboard/dashboard.module.js';
+import { UploadsModule } from './uploads/uploads.module.js';
+import { SiteSettingsModule } from './site-settings/site-settings.module.js';
+import { TermsSectionsModule } from './terms-sections/terms-sections.module.js';
+import { PartnerLeadsModule } from './partner-leads/partner-leads.module.js';
+import { ContactLeadsModule } from './contact-leads/contact-leads.module.js';
+import { OrdersModule } from "./orders/orders.module.js";
+import { ServiceabilityModule } from "./serviceability/serviceability.module.js";
+import {
+  SuperAdminModule,
+} from './super-admin/super-admin.module.js';
+import { FlowConfigModule } from "./flow-config/flow-config.module.js";
+import { VendorApplicationsModule } from './vendor-applications/vendor-applications.module.js';
+import { VendorAuthModule } from './vendor-auth/vendor-auth.module.js';
+import { VendorOrdersModule } from './vendor-orders/vendor-orders.module.js';
+import { AgentAuthModule } from './agent-auth/agent-auth.module.js';
+import { VendorAgentsModule } from './vendor-agents/vendor-agents.module.js';
+import { AgentAccountModule } from './agent-account/agent-account.module.js';
+import { AgentDashboardModule } from './agent-dashboard/agent-dashboard.module.js';
+import {
+  AgentOrdersModule,
+} from './agent-orders/agent-orders.module.js';
+
+@Module({
+  imports: [
+    PrismaModule,
+    CategoriesModule,
+    BrandsModule,
+    ProductsModule,
+    ProductSeriesModule,
+    VariantsModule,
+    VariantAttributesModule,
+    CatalogueImportModule,
+    QuestionnaireModule,
+    DashboardModule,
+    UploadsModule,
+    SiteSettingsModule,
+    TermsSectionsModule,
+    PartnerLeadsModule,
+    ContactLeadsModule,
+    OrdersModule,
+    ServiceabilityModule,
+    SuperAdminModule,
+    FlowConfigModule,
+    VendorApplicationsModule,
+    VendorAuthModule,
+    VendorOrdersModule,
+    AgentAuthModule,
+    VendorAgentsModule,
+    AgentAccountModule,
+    AgentDashboardModule,
+    AgentOrdersModule,
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}

@@ -1,7 +1,9 @@
 import {
+  Body,
   Controller,
   Get,
   Param,
+  Post,
   Query,
   Req,
 } from "@nestjs/common";
@@ -10,6 +12,10 @@ import type { Request } from "express";
 import {
   VendorAuthService,
 } from "../vendor-auth/vendor-auth.service.js";
+
+import {
+  AssignOrderAgentDto,
+} from "./dto/assign-order-agent.dto.js";
 
 import {
   VendorOrdersService,
@@ -41,14 +47,6 @@ export class VendorOrdersController {
       return parsedCookie.trim();
     }
 
-    /*
-     * Defensive fallback.
-     *
-     * Normally cookie-parser handles this,
-     * but keeping raw-header fallback avoids
-     * authentication failures if middleware
-     * ordering changes later.
-     */
     const rawCookie =
       req.headers.cookie;
 
@@ -103,11 +101,6 @@ export class VendorOrdersController {
     const token =
       this.getSessionToken(req);
 
-    /*
-     * VendorAuthService remains the single
-     * source of truth for authentication,
-     * expiry, idle timeout and membership.
-     */
     return this.vendorAuthService.getSession(
       token,
     );
@@ -128,6 +121,23 @@ export class VendorOrdersController {
       {
         dateFilter,
       },
+    );
+  }
+
+  /*
+   * IMPORTANT:
+   * Keep this static route before
+   * @Get(":orderNumber").
+   */
+  @Get("agents")
+  async getAssignableAgents(
+    @Req() req: Request,
+  ) {
+    const session =
+      await this.requireVendor(req);
+
+    return this.vendorOrdersService.getAssignableAgents(
+      session.vendorId,
     );
   }
 
@@ -156,15 +166,6 @@ export class VendorOrdersController {
     const session =
       await this.requireVendor(req);
 
-    /*
-     * SECURITY:
-     *
-     * vendorId is NEVER accepted from
-     * query/body/route.
-     *
-     * It always comes from the authenticated
-     * vendor session.
-     */
     return this.vendorOrdersService.listOrders(
       session.vendorId,
       {
@@ -175,6 +176,26 @@ export class VendorOrdersController {
         page,
         limit,
       },
+    );
+  }
+
+  @Post(":orderNumber/agent")
+  async assignAgent(
+    @Req() req: Request,
+
+    @Param("orderNumber")
+    orderNumber: string,
+
+    @Body()
+    body: AssignOrderAgentDto,
+  ) {
+    const session =
+      await this.requireVendor(req);
+
+    return this.vendorOrdersService.assignAgent(
+      session.vendorId,
+      orderNumber,
+      body.agentId,
     );
   }
 

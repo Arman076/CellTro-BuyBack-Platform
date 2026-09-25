@@ -56,6 +56,37 @@ export class OrdersService {
     );
   }
 
+  private normalizeEmail(
+    value: unknown,
+  ) {
+    return String(value ?? "")
+      .trim()
+      .toLowerCase();
+  }
+
+  private requiredEmail(
+    value: unknown,
+  ) {
+    const email =
+      this.normalizeEmail(
+        value,
+      );
+
+    if (
+      !email ||
+      email.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        email,
+      )
+    ) {
+      throw new BadRequestException(
+        "Enter a valid email address.",
+      );
+    }
+
+    return email;
+  }
+
   private async requireVerifiedCustomer(
     rawToken: string,
   ) {
@@ -208,6 +239,11 @@ export class OrdersService {
           body?.fullName,
           "Full name",
           100,
+        ),
+
+      email:
+        this.requiredEmail(
+          body?.email,
         ),
 
       house:
@@ -728,11 +764,23 @@ export class OrdersService {
             verified.phone,
         },
 
-        update: {},
+        update: {
+          email:
+            input.email,
+
+          normalizedEmail:
+            input.email,
+        },
 
         create: {
           phone:
             verified.phone,
+
+          email:
+            input.email,
+
+          normalizedEmail:
+            input.email,
         },
       });
 
@@ -827,15 +875,35 @@ export class OrdersService {
         body,
       );
 
-    const address =
-      await this.prisma.customerAddress.update({
-        where: {
-          id,
-        },
+    const [
+      ,
+      address,
+    ] =
+      await this.prisma.$transaction([
+        this.prisma.customer.update({
+          where: {
+            phone:
+              verified.phone,
+          },
 
-        data:
-          input,
-      });
+          data: {
+            email:
+              input.email,
+
+            normalizedEmail:
+              input.email,
+          },
+        }),
+
+        this.prisma.customerAddress.update({
+          where: {
+            id,
+          },
+
+          data:
+            input,
+        }),
+      ]);
 
     const serviceability =
       await this.prisma.serviceablePincode.findUnique({
@@ -996,9 +1064,7 @@ export class OrdersService {
         ? this.normalizePhone(
             body?.payoutUpiMobile,
           )
-        : null;
-
-    if (
+        : null;if (
       payoutMethod ===
         "UPI" &&
       !this.validateIndianPhone(
@@ -1256,6 +1322,11 @@ export class OrdersService {
       );
     }
 
+    const orderEmail =
+      this.requiredEmail(
+        address.email,
+      );
+
     if (!slot) {
       throw new BadRequestException(
         "Selected pickup slot is invalid.",
@@ -1309,6 +1380,21 @@ export class OrdersService {
               hashtext(${duplicateLockKey})
             )::text AS lock_result
           `;
+
+          await tx.customer.update({
+            where: {
+              id:
+                customer.id,
+            },
+
+            data: {
+              email:
+                orderEmail,
+
+              normalizedEmail:
+                orderEmail,
+            },
+          });
 
           const existingActiveOrder =
             await tx.sellOrder.findFirst({
@@ -1470,6 +1556,9 @@ export class OrdersService {
 
                     phone:
                       verified.phone,
+
+                    email:
+                      orderEmail,
 
                     house:
                       address.house,
@@ -1996,8 +2085,7 @@ export class OrdersService {
       );
     }
 
-    const existing =
-      await this.prisma.orderFeedback.findUnique({
+    const existing =await this.prisma.orderFeedback.findUnique({
         where: {
           orderId:
             order.id,
@@ -2697,6 +2785,13 @@ export class OrdersService {
           .phone ??
           "-",
       );
+
+      labelValue(
+        "Email",
+        order.address
+          .email ??
+          "-",
+      );
     }
 
     section(
@@ -2996,8 +3091,7 @@ export class OrdersService {
     if (!order) {
       throw new NotFoundException(
         "Order not found.",
-      );
-    }
+      );}
 
     return this.buildOrderPdf(
       this.toOrderView(
@@ -3074,6 +3168,9 @@ export class OrdersService {
 
               phone:
                 address.phone,
+
+              email:
+                address.email,
 
               house:
                 address.house,
@@ -3185,3 +3282,4 @@ export class OrdersService {
     };
   }
 }
+
