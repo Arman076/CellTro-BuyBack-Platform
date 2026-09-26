@@ -1,22 +1,31 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AgentSidebar from "@/components/agent-sidebar";
 import {
   ApiError,
+  commitAgentQuoteDecision,
   getAgentInspection,
   getAgentOrder,
+  sendOrderVerification,
+  verifyOrderVerification,
   type AgentInspectionResponse,
   type AgentOrderDetailResponse,
+  type AgentQuoteDecision,
+  type OrderVerificationChannel,
 } from "@/lib/agent-api";
 import "./quote.css";
 
 type PageProps = { params: Promise<{ orderNumber: string }> };
 
+type DecisionStage = "IDLE" | "SEND" | "OTP" | "COMMITTING" | "DONE";
+
 function errorMessage(error: unknown, fallback: string) {
-  if (error instanceof ApiError || error instanceof Error)
+  if (error instanceof ApiError || error instanceof Error) {
     return error.message || fallback;
+  }
+
   return fallback;
 }
 
@@ -28,9 +37,28 @@ function money(value: number) {
   }).format(value);
 }
 
+function maskPhone(value: string) {
+  const digits = value.replace(/\D/g, "");
+  const local =
+    digits.startsWith("91") && digits.length === 12 ? digits.slice(2) : digits;
+
+  if (local.length < 4) return "Mobile";
+
+  return `${local.slice(0, 2)}******${local.slice(-2)}`;
+}
+
+function maskEmail(value: string) {
+  const [local, domain] = value.split("@");
+
+  if (!local || !domain) return "Email";
+
+  return `${local.charAt(0)}${"*".repeat(Math.max(3, local.length - 1))}@${domain}`;
+}
+
 export default function AgentFinalQuotePage({ params }: PageProps) {
   const { orderNumber } = use(params);
   const router = useRouter();
+
   const [inspection, setInspection] = useState<AgentInspectionResponse | null>(
     null,
   );
@@ -38,6 +66,18 @@ export default function AgentFinalQuotePage({ params }: PageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const [decision, setDecision] = useState<AgentQuoteDecision | null>(null);
+  const [decisionStage, setDecisionStage] =
+    useState<DecisionStage>("IDLE");
+  const [channel, setChannel] =
+    useState<OrderVerificationChannel>("SMS");
+  const [challengeId, setChallengeId] = useState("");
+  const [destinationMasked, setDestinationMasked] = useState("");
+  const [otp, setOtp] = useState("");
+  const [decisionError, setDecisionError] = useState("");
+  const [decisionMessage, setDecisionMessage] = useState("");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,8 +100,9 @@ export default function AgentFinalQuotePage({ params }: PageProps) {
         setOrder(orderResponse);
       })
       .catch((err: unknown) => {
-        if (!cancelled)
+        if (!cancelled) {
           setError(errorMessage(err, "Unable to load final quote."));
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -71,6 +112,149 @@ export default function AgentFinalQuotePage({ params }: PageProps) {
       cancelled = true;
     };
   }, [orderNumber, router]);
+
+  const customerPhone = useMemo(() => {
+    return (
+      order?.address?.phone?.trim() ||
+      order?.customer?.phone?.trim() ||
+      ""
+    );
+  }, [order]);
+
+  const customerEmail = useMemo(() => {
+    return (
+      order?.address?.email?.trim() ||
+      order?.customer?.email?.trim() ||
+      ""
+    );
+  }, [order]);
+
+  const availableChannels = useMemo(() => {
+    const result: OrderVerificationChannel[] = [];
+
+    if (customerPhone) result.push("SMS");
+    if (customerEmail) result.push("EMAIL");
+
+    return result;
+  }, [customerEmail, customerPhone]);
+
+  function closeDecision() {
+    if (busy) return;
+
+    setDecision(null);
+    setDecisionStage("IDLE");
+    setChallengeId("");
+    setDestinationMasked("");
+    setOtp("");
+    setDecisionError("");
+    setDecisionMessage("");
+  }
+
+  function openDecision(nextDecision: AgentQuoteDecision) {
+    const preferredChannel: OrderVerificationChannel = customerPhone
+      ? "SMS"
+      : "EMAIL";
+
+    setDecision(nextDecision);
+    setChannel(preferredChannel);
+    setDecisionStage("SEND");
+    setChallengeId("");
+    setDestinationMasked("");
+    setOtp("");
+    setDecisionError("");
+    setDecisionMessage("");
+  }
+
+  function destinationForChannel(nextChannel: OrderVerificationChannel) {
+    return nextChannel === "SMS" ? customerPhone : customerEmail;
+  }
+
+  async function handleSendOtp() {
+    if (!decision) return;
+
+    const destination = destinationForChannel(channel);
+
+    if (!destination) {
+      setDecisionError(
+        channel === "SMS"
+          ? "Customer mobile number is not available for this order."
+          : "Customer email is not available for this order.",
+      );
+      return;
+    }
+
+    setBusy(true);
+    setDecisionError("");
+    setDecisionMessage("");
+
+    try {
+      const response = await sendOrderVerification(orderNumber, {
+        destination,
+        purpose: decision === "ACCEPTED" ? "QUOTE_ACCEPT" : "QUOTE_REJECT",
+      });
+
+      setChallengeId(response.challengeId);
+      setDestinationMasked(response.destinationMasked);
+      setDecisionStage("OTP");
+      setDecisionMessage(
+        `OTP sent to ${response.destinationMasked}. Ask the customer for this OTP.`,
+      );
+    } catch (err: unknown) {
+      setDecisionError(
+        errorMessage(err, "Unable to send customer verification OTP."),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleVerifyAndConfirm() {
+    if (!decision || !challengeId) return;
+
+    const normalizedOtp = otp.replace(/\D/g, "");
+
+    if (!/^\d{4,9}$/.test(normalizedOtp)) {
+      setDecisionError("Enter the OTP received by the customer.");
+      return;
+    }
+
+    setBusy(true);
+    setDecisionError("");
+    setDecisionMessage("");
+
+    try {
+      const verification = await verifyOrderVerification(orderNumber, {
+        challengeId,
+        otp: normalizedOtp,
+        destination: destinationForChannel(channel),
+      });
+
+      if (!verification.verified) {
+        throw new Error("Customer OTP could not be verified.");
+      }
+
+      setDecisionStage("COMMITTING");
+
+      const result = await commitAgentQuoteDecision(orderNumber, {
+        challengeId: verification.challengeId,
+        decision,
+      });
+
+      setDecisionStage("DONE");
+      setDecisionMessage(
+        result.decision === "ACCEPTED"
+          ? "Customer accepted the final offer. Continue to payment."
+          : "Customer rejected the final offer. The decision has been recorded.",
+      );
+    } catch (err: unknown) {
+      setDecisionStage("OTP");
+      setDecisionError(
+        errorMessage(err, "Unable to confirm the customer decision."),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -105,6 +289,7 @@ export default function AgentFinalQuotePage({ params }: PageProps) {
   }
 
   const quote = inspection.inspection.quote;
+  const selectedDestination = destinationForChannel(channel);
 
   return (
     <div className="quote-shell">
@@ -231,27 +416,239 @@ export default function AgentFinalQuotePage({ params }: PageProps) {
           <section className="quote-next-card">
             <div>
               <span>Customer decision</span>
-              <h2>Confirm this offer with the customer</h2>
+              <h2>Does the customer accept this offer?</h2>
               <p>
-                Acceptance or rejection will require customer verification in
-                the next step.
+                Select the customer&apos;s decision. Both acceptance and
+                rejection require customer OTP verification.
               </p>
             </div>
+
             <div className="quote-decision-actions">
-              <button type="button" className="quote-reject-button" disabled>
+              <button
+                type="button"
+                className="quote-reject-button"
+                onClick={() => openDecision("REJECTED")}
+              >
                 Reject Offer
               </button>
-              <button type="button" className="quote-accept-button" disabled>
+
+              <button
+                type="button"
+                className="quote-accept-button"
+                onClick={() => openDecision("ACCEPTED")}
+              >
                 Accept Offer
               </button>
             </div>
+
             <small>
-              Decision buttons will be enabled after quote-bound OTP
-              verification is connected.
+              The OTP is tied to this exact frozen quote and customer decision.
             </small>
           </section>
         </div>
       </main>
+
+      {decision && (
+        <div
+          className="quote-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeDecision();
+          }}
+        >
+          <section
+            className="quote-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="quote-decision-title"
+          >
+            <button
+              type="button"
+              className="quote-modal-close"
+              aria-label="Close customer verification"
+              onClick={closeDecision}
+              disabled={busy}
+            >
+              ×
+            </button>
+
+            <div
+              className={`quote-decision-mark ${
+                decision === "ACCEPTED"
+                  ? "quote-decision-mark-accept"
+                  : "quote-decision-mark-reject"
+              }`}
+            >
+              {decision === "ACCEPTED" ? "✓" : "×"}
+            </div>
+
+            <span className="quote-modal-eyebrow">Customer verification</span>
+            <h2 id="quote-decision-title">
+              {decision === "ACCEPTED"
+                ? "Accept final offer"
+                : "Reject final offer"}
+            </h2>
+
+            <p className="quote-modal-copy">
+              Customer is confirming{" "}
+              <strong>{money(quote.finalPrice)}</strong>. Verification is
+              required before this decision is recorded.
+            </p>
+
+            {decisionStage !== "DONE" && (
+              <>
+                <div className="quote-channel-group">
+                  <span>Send OTP via</span>
+
+                  <div className="quote-channel-options">
+                    <button
+                      type="button"
+                      className={channel === "SMS" ? "active" : ""}
+                      onClick={() => setChannel("SMS")}
+                      disabled={!customerPhone || busy || decisionStage === "OTP"}
+                    >
+                      <b>Mobile</b>
+                      <small>
+                        {customerPhone ? maskPhone(customerPhone) : "Unavailable"}
+                      </small>
+                    </button>
+
+                    <button
+                      type="button"
+                      className={channel === "EMAIL" ? "active" : ""}
+                      onClick={() => setChannel("EMAIL")}
+                      disabled={!customerEmail || busy || decisionStage === "OTP"}
+                    >
+                      <b>Email</b>
+                      <small>
+                        {customerEmail ? maskEmail(customerEmail) : "Unavailable"}
+                      </small>
+                    </button>
+                  </div>
+                </div>
+
+                {decisionStage === "SEND" && (
+                  <button
+                    type="button"
+                    className="quote-primary-action"
+                    onClick={handleSendOtp}
+                    disabled={busy || !selectedDestination}
+                  >
+                    {busy ? "Sending OTP..." : "Send Customer OTP"}
+                  </button>
+                )}
+
+                {(decisionStage === "OTP" ||
+                  decisionStage === "COMMITTING") && (
+                  <>
+                    <label className="quote-otp-field">
+                      <span>Customer OTP</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={9}
+                        value={otp}
+                        onChange={(event) =>
+                          setOtp(event.target.value.replace(/\D/g, ""))
+                        }
+                        placeholder="Enter OTP"
+                        disabled={busy}
+                      />
+                      <small>
+                        {destinationMasked
+                          ? `Sent to ${destinationMasked}`
+                          : "Enter the OTP received by the customer."}
+                      </small>
+                    </label>
+
+                    <button
+                      type="button"
+                      className={
+                        decision === "ACCEPTED"
+                          ? "quote-primary-action"
+                          : "quote-danger-action"
+                      }
+                      onClick={handleVerifyAndConfirm}
+                      disabled={busy || !otp}
+                    >
+                      {busy || decisionStage === "COMMITTING"
+                        ? "Confirming..."
+                        : decision === "ACCEPTED"
+                          ? "Verify OTP & Accept"
+                          : "Verify OTP & Reject"}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="quote-link-action"
+                      onClick={() => {
+                        setDecisionStage("SEND");
+                        setChallengeId("");
+                        setDestinationMasked("");
+                        setOtp("");
+                        setDecisionError("");
+                        setDecisionMessage("");
+                      }}
+                      disabled={busy}
+                    >
+                      Change verification method
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+
+            {decisionError && (
+              <div className="quote-modal-alert quote-modal-alert-error">
+                {decisionError}
+              </div>
+            )}
+
+            {decisionMessage && (
+              <div
+                className={`quote-modal-alert ${
+                  decisionStage === "DONE"
+                    ? "quote-modal-alert-success"
+                    : "quote-modal-alert-info"
+                }`}
+              >
+                {decisionMessage}
+              </div>
+            )}
+
+            {decisionStage === "DONE" && (
+              <div className="quote-done-actions">
+                {decision === "ACCEPTED" ? (
+                  <button
+                    type="button"
+                    className="quote-primary-action"
+                    onClick={() =>
+                      router.push(
+                        `/orders/${encodeURIComponent(orderNumber)}`,
+                      )
+                    }
+                  >
+                    Continue to Payment
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="quote-primary-action"
+                    onClick={() =>
+                      router.push(
+                        `/orders/${encodeURIComponent(orderNumber)}`,
+                      )
+                    }
+                  >
+                    Back to Order
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }

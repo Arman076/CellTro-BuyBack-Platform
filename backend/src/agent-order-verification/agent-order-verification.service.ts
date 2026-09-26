@@ -16,6 +16,7 @@ import {
 } from 'crypto';
 
 import {
+  AgentQuoteDecision,
   OrderEventActorType,
   OrderEventType,
   OrderVerificationChannel,
@@ -256,6 +257,7 @@ export class AgentOrderVerificationService {
 
           customer: {
             select: {
+              id: true,
               phone: true,
               email: true,
               normalizedEmail: true,
@@ -367,6 +369,7 @@ export class AgentOrderVerificationService {
 
   private verifyDestinationMatches(
     order: OwnedOrder,
+    purpose: OrderVerificationPurpose,
     channel: OrderVerificationChannel,
     normalizedDestination: string,
   ): void {
@@ -377,23 +380,45 @@ export class AgentOrderVerificationService {
       );
 
     if (
-      !allowed.includes(
+      allowed.includes(
         normalizedDestination,
       )
     ) {
-      if (
-        channel ===
-        OrderVerificationChannel.SMS
-      ) {
-        throw new ForbiddenException(
-          'Mobile number does not match this order.',
-        );
-      }
+      return;
+    }
 
+    /*
+     * A missing email may be captured by the agent only at
+     * INSPECTION_START. It is still untrusted at this point:
+     * the challenge fingerprint binds the OTP to this exact
+     * normalized candidate, and the email is persisted only
+     * after successful OTP verification.
+     *
+     * Once any authoritative email exists, a different email
+     * is never accepted here.
+     */
+    if (
+      channel ===
+        OrderVerificationChannel.EMAIL &&
+      purpose ===
+        OrderVerificationPurpose.INSPECTION_START &&
+      allowed.length === 0
+    ) {
+      return;
+    }
+
+    if (
+      channel ===
+      OrderVerificationChannel.SMS
+    ) {
       throw new ForbiddenException(
-        'Email address does not match this order.',
+        'Mobile number does not match this order.',
       );
     }
+
+    throw new ForbiddenException(
+      'Email address does not match this order.',
+    );
   }
 
   /**
@@ -411,7 +436,11 @@ export class AgentOrderVerificationService {
       channel: OrderVerificationChannel;
       destinationFingerprint: string;
     },
-  ): string {
+    suppliedDestination?: string,
+  ): {
+    destination: string;
+    isNewInspectionEmail: boolean;
+  } {
     const allowed =
       this.getAllowedDestinations(
         order,
@@ -435,13 +464,150 @@ export class AgentOrderVerificationService {
           challenge.destinationFingerprint,
         )
       ) {
-        return destination;
+        return {
+          destination,
+          isNewInspectionEmail: false,
+        };
+      }
+    }
+
+    /*
+     * The only non-authoritative destination we can resolve is
+     * a candidate email created for INSPECTION_START when the
+     * order/customer had no email at send time.
+     *
+     * The raw candidate is never stored on the challenge.
+     * The browser must supply it again and its HMAC fingerprint
+     * must match the challenge exactly.
+     */
+    if (
+      challenge.channel ===
+        OrderVerificationChannel.EMAIL &&
+      challenge.purpose ===
+        OrderVerificationPurpose.INSPECTION_START &&
+      allowed.length === 0 &&
+      suppliedDestination
+    ) {
+      const candidate =
+        this.normalizeEmail(
+          suppliedDestination,
+        );
+
+      const candidateFingerprint =
+        this.destinationFingerprint(
+          order.id,
+          challenge.purpose,
+          challenge.channel,
+          candidate,
+        );
+
+      if (
+        this.secureHashEquals(
+          candidateFingerprint,
+          challenge.destinationFingerprint,
+        )
+      ) {
+        return {
+          destination: candidate,
+          isNewInspectionEmail: true,
+        };
       }
     }
 
     throw new UnauthorizedException(
       'Verification destination is no longer valid for this order.',
     );
+  }
+
+  /**
+   * Quote-decision OTPs are bound to the exact immutable agent quote.
+   * No price supplied by the browser participates in this binding.
+   */
+  private quoteDecisionContextHash(
+    orderId: string,
+    inspectionId: string,
+    quoteHash: string,
+    purpose: OrderVerificationPurpose,
+  ): string {
+    if (
+      purpose !== OrderVerificationPurpose.QUOTE_ACCEPT &&
+      purpose !== OrderVerificationPurpose.QUOTE_REJECT
+    ) {
+      throw new BadRequestException(
+        'Quote decision context requires an accept or reject purpose.',
+      );
+    }
+
+    return createHmac('sha256', this.otpSecret())
+      .update(
+        [
+          'AGENT_QUOTE_DECISION',
+          orderId,
+          inspectionId,
+          quoteHash,
+          purpose,
+        ].join(':'),
+      )
+      .digest('hex');
+  }
+
+  private async getQuoteDecisionContext(
+    orderId: string,
+    purpose: OrderVerificationPurpose,
+  ): Promise<{
+    inspectionId: string;
+    quoteHash: string;
+    contextHash: string;
+  } | null> {
+    if (
+      purpose !== OrderVerificationPurpose.QUOTE_ACCEPT &&
+      purpose !== OrderVerificationPurpose.QUOTE_REJECT
+    ) {
+      return null;
+    }
+
+    const inspection =
+      await this.prisma.agentOrderInspection.findUnique({
+        where: {
+          orderId,
+        },
+
+        select: {
+          id: true,
+          status: true,
+          quoteHash: true,
+          quoteGeneratedAt: true,
+          quoteDecision: true,
+        },
+      });
+
+    if (
+      !inspection ||
+      inspection.status !== 'COMPLETED' ||
+      !inspection.quoteHash ||
+      !inspection.quoteGeneratedAt
+    ) {
+      throw new ConflictException(
+        'A completed frozen inspection quote is required before customer decision verification.',
+      );
+    }
+
+    if (inspection.quoteDecision) {
+      throw new ConflictException(
+        `Customer has already ${inspection.quoteDecision.toLowerCase()} this quote.`,
+      );
+    }
+
+    return {
+      inspectionId: inspection.id,
+      quoteHash: inspection.quoteHash,
+      contextHash: this.quoteDecisionContextHash(
+        orderId,
+        inspection.id,
+        inspection.quoteHash,
+        purpose,
+      ),
+    };
   }
 
   private async enforceCooldown(
@@ -558,6 +724,12 @@ export class AgentOrderVerificationService {
       order.status,
     );
 
+    const quoteContext =
+      await this.getQuoteDecisionContext(
+        order.id,
+        body.purpose,
+      );
+
     const {
       channel,
       normalized,
@@ -568,6 +740,7 @@ export class AgentOrderVerificationService {
 
     this.verifyDestinationMatches(
       order,
+      body.purpose,
       channel,
       normalized,
     );
@@ -636,7 +809,7 @@ export class AgentOrderVerificationService {
               fingerprint,
 
             contextHash:
-              null,
+              quoteContext?.contextHash ?? null,
 
             expiresAt,
           },
@@ -765,7 +938,7 @@ export class AgentOrderVerificationService {
             fingerprint,
 
           contextHash:
-            null,
+            quoteContext?.contextHash ?? null,
 
           expiresAt,
 
@@ -915,6 +1088,7 @@ export class AgentOrderVerificationService {
     orderNumber: string,
     challengeId: string,
     otp: string,
+    suppliedDestination?: string,
   ) {
     const order =
       await this.getOwnedOrder(
@@ -1015,10 +1189,34 @@ export class AgentOrderVerificationService {
       order.status,
     );
 
-    const destination =
+    const quoteContext =
+      await this.getQuoteDecisionContext(
+        order.id,
+        challenge.purpose,
+      );
+
+    if (quoteContext) {
+      if (
+        !challenge.contextHash ||
+        !this.secureHashEquals(
+          challenge.contextHash,
+          quoteContext.contextHash,
+        )
+      ) {
+        throw new UnauthorizedException(
+          'OTP is not valid for the current frozen quote.',
+        );
+      }
+    }
+
+    const {
+      destination,
+      isNewInspectionEmail,
+    } =
       this.resolveChallengeDestination(
         order,
         challenge,
+        suppliedDestination,
       );
 
     if (
@@ -1079,27 +1277,148 @@ export class AgentOrderVerificationService {
      * from independently transitioning the same PENDING challenge.
      */
     const transitioned =
-      await this.prisma.orderVerificationChallenge.updateMany({
-        where: {
-          id:
-            challenge.id,
+      await this.prisma.$transaction(
+        async (tx) => {
+          const challengeTransition =
+            await tx.orderVerificationChallenge.updateMany({
+              where: {
+                id:
+                  challenge.id,
 
-          status:
-            OrderVerificationStatus.PENDING,
+                status:
+                  OrderVerificationStatus.PENDING,
 
-          expiresAt: {
-            gt: now,
-          },
+                expiresAt: {
+                  gt: now,
+                },
+              },
+
+              data: {
+                status:
+                  OrderVerificationStatus.VERIFIED,
+
+                verifiedAt:
+                  now,
+              },
+            });
+
+          if (
+            challengeTransition.count !== 1 ||
+            !isNewInspectionEmail
+          ) {
+            return challengeTransition;
+          }
+
+          /*
+           * Persist a manually entered email only after its OTP
+           * has been verified. Both writes are conditional so a
+           * concurrent request can never overwrite an email that
+           * became authoritative in the meantime.
+           */
+          const customerWrite =
+            await tx.customer.updateMany({
+              where: {
+                id:
+                  order.customer.id,
+
+                email:
+                  null,
+
+                normalizedEmail:
+                  null,
+              },
+
+              data: {
+                email:
+                  destination,
+
+                normalizedEmail:
+                  destination,
+              },
+            });
+
+          const snapshotWrite =
+            await tx.orderAddressSnapshot.updateMany({
+              where: {
+                orderId:
+                  order.id,
+
+                email:
+                  null,
+              },
+
+              data: {
+                email:
+                  destination,
+              },
+            });
+
+          const expectedSnapshotWrites =
+            order.addressSnapshot
+              ? 1
+              : 0;
+
+          if (
+            customerWrite.count !== 1 ||
+            snapshotWrite.count !==
+              expectedSnapshotWrites
+          ) {
+            const currentOrder =
+              await tx.sellOrder.findUnique({
+                where: {
+                  id:
+                    order.id,
+                },
+
+                select: {
+                  customer: {
+                    select: {
+                      email: true,
+                      normalizedEmail: true,
+                    },
+                  },
+
+                  addressSnapshot: {
+                    select: {
+                      email: true,
+                    },
+                  },
+                },
+              });
+
+            const currentEmails = [
+              currentOrder?.customer.normalizedEmail,
+              currentOrder?.customer.email,
+              currentOrder?.addressSnapshot?.email,
+            ]
+              .filter(
+                (
+                  value,
+                ): value is string =>
+                  Boolean(value),
+              )
+              .map((value) =>
+                this.normalizeEmail(
+                  value,
+                ),
+              );
+
+            if (
+              currentEmails.length === 0 ||
+              currentEmails.some(
+                (value) =>
+                  value !== destination,
+              )
+            ) {
+              throw new ConflictException(
+                'A different customer email was saved while this OTP was being verified. Refresh the order and try again.',
+              );
+            }
+          }
+
+          return challengeTransition;
         },
-
-        data: {
-          status:
-            OrderVerificationStatus.VERIFIED,
-
-          verifiedAt:
-            now,
-        },
-      });
+      );
 
     if (
       transitioned.count === 0
@@ -1196,6 +1515,357 @@ export class AgentOrderVerificationService {
         now,
     };
   }
+  async commitQuoteDecision(
+    identity: AgentIdentity,
+    orderNumber: string,
+    challengeId: string,
+    decisionValue: string,
+  ) {
+    const normalizedChallengeId =
+      String(challengeId ?? '').trim();
+
+    if (!normalizedChallengeId) {
+      throw new BadRequestException(
+        'Verified quote decision challenge is required.',
+      );
+    }
+
+    const normalizedDecision =
+      String(decisionValue ?? '')
+        .trim()
+        .toUpperCase();
+
+    if (
+      normalizedDecision !== AgentQuoteDecision.ACCEPTED &&
+      normalizedDecision !== AgentQuoteDecision.REJECTED
+    ) {
+      throw new BadRequestException(
+        'Decision must be ACCEPTED or REJECTED.',
+      );
+    }
+
+    const decision =
+      normalizedDecision as AgentQuoteDecision;
+
+    const expectedPurpose =
+      decision === AgentQuoteDecision.ACCEPTED
+        ? OrderVerificationPurpose.QUOTE_ACCEPT
+        : OrderVerificationPurpose.QUOTE_REJECT;
+
+    const expectedEventType =
+      decision === AgentQuoteDecision.ACCEPTED
+        ? OrderEventType.CUSTOMER_ACCEPTED
+        : OrderEventType.CUSTOMER_REJECTED;
+
+    const order =
+      await this.getOwnedOrder(
+        identity,
+        orderNumber,
+      );
+
+    if (order.status !== 'INSPECTION_COMPLETED') {
+      throw new ConflictException(
+        'Customer decision is allowed only after inspection is completed.',
+      );
+    }
+
+    const result =
+      await this.prisma.$transaction(
+        async (tx) => {
+          const inspection =
+            await tx.agentOrderInspection.findUnique({
+              where: {
+                orderId: order.id,
+              },
+
+              select: {
+                id: true,
+                orderId: true,
+                agentId: true,
+                vendorId: true,
+                status: true,
+                quoteHash: true,
+                quoteGeneratedAt: true,
+                quoteFinalPrice: true,
+                quoteDecision: true,
+                quoteDecisionAt: true,
+                quoteDecisionChallengeId: true,
+              },
+            });
+
+          if (
+            !inspection ||
+            inspection.status !== 'COMPLETED' ||
+            !inspection.quoteHash ||
+            !inspection.quoteGeneratedAt ||
+            inspection.quoteFinalPrice === null
+          ) {
+            throw new ConflictException(
+              'Completed frozen inspection quote was not found.',
+            );
+          }
+
+          if (
+            inspection.agentId !== identity.agentId ||
+            inspection.vendorId !== identity.vendorId
+          ) {
+            throw new ForbiddenException(
+              'Inspection does not belong to the active agent assignment.',
+            );
+          }
+
+          /*
+           * Idempotent retry:
+           * the same verified challenge + same decision returns the canonical
+           * stored decision instead of creating another event.
+           */
+          if (inspection.quoteDecision) {
+            if (
+              inspection.quoteDecision === decision &&
+              inspection.quoteDecisionChallengeId ===
+                normalizedChallengeId
+            ) {
+              return {
+                alreadyDecided: true,
+                inspection,
+              };
+            }
+
+            throw new ConflictException(
+              `Customer has already ${inspection.quoteDecision.toLowerCase()} this quote.`,
+            );
+          }
+
+          const challenge =
+            await tx.orderVerificationChallenge.findFirst({
+              where: {
+                id: normalizedChallengeId,
+                orderId: order.id,
+                purpose: expectedPurpose,
+              },
+
+              select: {
+                id: true,
+                purpose: true,
+                channel: true,
+                destinationMasked: true,
+                contextHash: true,
+                status: true,
+                expiresAt: true,
+                verifiedAt: true,
+                consumedAt: true,
+              },
+            });
+
+          if (!challenge) {
+            throw new NotFoundException(
+              'Quote decision verification challenge not found.',
+            );
+          }
+
+          const expectedContextHash =
+            this.quoteDecisionContextHash(
+              order.id,
+              inspection.id,
+              inspection.quoteHash,
+              expectedPurpose,
+            );
+
+          if (
+            !challenge.contextHash ||
+            !this.secureHashEquals(
+              challenge.contextHash,
+              expectedContextHash,
+            )
+          ) {
+            throw new UnauthorizedException(
+              'OTP is not valid for the current frozen quote.',
+            );
+          }
+
+          if (
+            challenge.status !==
+            OrderVerificationStatus.VERIFIED
+          ) {
+            throw new UnauthorizedException(
+              'Verify the customer OTP before confirming the quote decision.',
+            );
+          }
+
+          const now = new Date();
+
+          if (
+            challenge.expiresAt.getTime() <=
+            now.getTime()
+          ) {
+            throw new UnauthorizedException(
+              'OTP verification has expired. Request a new OTP.',
+            );
+          }
+
+          /*
+           * Exactly one concurrent request can consume VERIFIED -> CONSUMED.
+           */
+          const consumed =
+            await tx.orderVerificationChallenge.updateMany({
+              where: {
+                id: challenge.id,
+                orderId: order.id,
+                purpose: expectedPurpose,
+                status:
+                  OrderVerificationStatus.VERIFIED,
+                expiresAt: {
+                  gt: now,
+                },
+              },
+
+              data: {
+                status:
+                  OrderVerificationStatus.CONSUMED,
+                consumedAt: now,
+              },
+            });
+
+          if (consumed.count !== 1) {
+            const currentInspection =
+              await tx.agentOrderInspection.findUnique({
+                where: {
+                  orderId: order.id,
+                },
+
+                select: {
+                  id: true,
+                  quoteDecision: true,
+                  quoteDecisionAt: true,
+                  quoteDecisionChallengeId: true,
+                  quoteFinalPrice: true,
+                  quoteHash: true,
+                },
+              });
+
+            if (
+              currentInspection?.quoteDecision === decision &&
+              currentInspection.quoteDecisionChallengeId ===
+                challenge.id
+            ) {
+              return {
+                alreadyDecided: true,
+                inspection: {
+                  ...inspection,
+                  quoteDecision:
+                    currentInspection.quoteDecision,
+                  quoteDecisionAt:
+                    currentInspection.quoteDecisionAt,
+                  quoteDecisionChallengeId:
+                    currentInspection.quoteDecisionChallengeId,
+                },
+              };
+            }
+
+            throw new ConflictException(
+              'Quote decision is already being processed. Please retry.',
+            );
+          }
+
+          /*
+           * Conditional write is the second concurrency gate.
+           * It prevents ACCEPT and REJECT from both winning.
+           */
+          const decisionWrite =
+            await tx.agentOrderInspection.updateMany({
+              where: {
+                id: inspection.id,
+                orderId: order.id,
+                agentId: identity.agentId,
+                vendorId: identity.vendorId,
+                status: 'COMPLETED',
+                quoteHash: inspection.quoteHash,
+                quoteDecision: null,
+              },
+
+              data: {
+                quoteDecision: decision,
+                quoteDecisionAt: now,
+                quoteDecisionChallengeId:
+                  challenge.id,
+              },
+            });
+
+          if (decisionWrite.count !== 1) {
+            throw new ConflictException(
+              'Customer decision changed before it could be saved.',
+            );
+          }
+
+          await this.orderEvents.record(
+            {
+              orderId: order.id,
+              eventType: expectedEventType,
+              actorType:
+                OrderEventActorType.CUSTOMER,
+              agentId: identity.agentId,
+              idempotencyKey:
+                `quote-decision:${inspection.id}`,
+              metadata: {
+                inspectionId: inspection.id,
+                quoteHash: inspection.quoteHash,
+                decision,
+                challengeId: challenge.id,
+                channel: challenge.channel,
+                destinationMasked:
+                  challenge.destinationMasked,
+                quoteFinalPrice:
+                  inspection.quoteFinalPrice.toString(),
+              },
+            },
+            tx,
+          );
+
+          return {
+            alreadyDecided: false,
+            inspection: {
+              ...inspection,
+              quoteDecision: decision,
+              quoteDecisionAt: now,
+              quoteDecisionChallengeId:
+                challenge.id,
+            },
+          };
+        },
+      );
+
+    return {
+      decided: true,
+      alreadyDecided:
+        result.alreadyDecided,
+      orderNumber:
+        order.orderNumber,
+      orderStatus:
+        order.status,
+      decision:
+        result.inspection.quoteDecision,
+      decisionAt:
+        result.inspection.quoteDecisionAt,
+      inspectionId:
+        result.inspection.id,
+      quote: {
+        finalPrice:
+          Number(
+            result.inspection.quoteFinalPrice,
+          ),
+        quoteHash:
+          result.inspection.quoteHash,
+        generatedAt:
+          result.inspection.quoteGeneratedAt,
+      },
+      nextStep:
+        result.inspection.quoteDecision ===
+        AgentQuoteDecision.ACCEPTED
+          ? 'PAYMENT'
+          : 'REJECTED',
+    };
+  }
+
    async startInspection(
   identity: AgentIdentity,
   orderNumber: string,

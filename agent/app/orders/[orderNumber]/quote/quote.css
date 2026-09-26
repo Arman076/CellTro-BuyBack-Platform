@@ -241,6 +241,7 @@
   height: 44px;
   border-radius: 11px;
   font-weight: 800;
+  cursor: pointer;
 }
 
 .quote-reject-button {
@@ -323,6 +324,223 @@
   border-top-color: #172033;
   border-radius: 50%;
   animation: quote-spin 0.8s linear infinite;
+}
+
+.quote-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(17, 24, 39, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.quote-modal {
+  position: relative;
+  width: min(480px, 100%);
+  max-height: min(720px, calc(100vh - 32px));
+  overflow-y: auto;
+  padding: 28px;
+  border: 1px solid #e3e8f0;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(17, 24, 39, 0.22);
+}
+
+.quote-modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: #f3f5f9;
+  color: #465267;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.quote-decision-mark {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 16px;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.quote-decision-mark-accept {
+  background: #eaf8ef;
+  color: #19703a;
+}
+
+.quote-decision-mark-reject {
+  background: #fff0f0;
+  color: #b52f2f;
+}
+
+.quote-modal-eyebrow {
+  display: block;
+  margin-bottom: 5px;
+  color: #68758a;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.quote-modal h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.quote-modal-copy {
+  margin: 8px 0 22px;
+  color: #68758a;
+  line-height: 1.55;
+}
+
+.quote-channel-group > span,
+.quote-otp-field > span {
+  display: block;
+  margin-bottom: 8px;
+  color: #465267;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.quote-channel-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.quote-channel-options button {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: #fff;
+  color: #172033;
+  text-align: left;
+  cursor: pointer;
+}
+
+.quote-channel-options button.active {
+  border-color: #172033;
+  box-shadow: 0 0 0 1px #172033;
+}
+
+.quote-channel-options button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.quote-channel-options small {
+  overflow: hidden;
+  color: #7a8495;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quote-primary-action,
+.quote-danger-action {
+  width: 100%;
+  min-height: 46px;
+  margin-top: 18px;
+  border: 0;
+  border-radius: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.quote-primary-action {
+  background: #172033;
+  color: #fff;
+}
+
+.quote-danger-action {
+  background: #b52f2f;
+  color: #fff;
+}
+
+.quote-primary-action:disabled,
+.quote-danger-action:disabled,
+.quote-link-action:disabled,
+.quote-modal-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.quote-otp-field {
+  display: block;
+  margin-top: 20px;
+}
+
+.quote-otp-field input {
+  width: 100%;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid #dfe4ec;
+  border-radius: 11px;
+  outline: none;
+  font: inherit;
+  letter-spacing: 0.12em;
+}
+
+.quote-otp-field input:focus {
+  border-color: #172033;
+  box-shadow: 0 0 0 3px rgba(23, 32, 51, 0.08);
+}
+
+.quote-otp-field small {
+  display: block;
+  margin-top: 7px;
+  color: #7a8495;
+}
+
+.quote-link-action {
+  display: block;
+  margin: 13px auto 0;
+  border: 0;
+  background: transparent;
+  color: #465267;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.quote-modal-alert {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 11px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.quote-modal-alert-error {
+  background: #fff0f0;
+  color: #a52a2a;
+}
+
+.quote-modal-alert-info {
+  background: #f4f8ff;
+  color: #34527f;
+}
+
+.quote-modal-alert-success {
+  background: #eaf8ef;
+  color: #19703a;
+}
+
+.quote-done-actions {
+  margin-top: 8px;
 }
 
 @keyframes quote-spin {
@@ -428,6 +646,11 @@
     min-width: 0;
     width: 100%;
   }
+
+  .quote-modal {
+    padding: 24px 18px 20px;
+    border-radius: 17px;
+  }
 }
 
 @media (max-width: 390px) {
@@ -449,7 +672,18 @@
     font-size: 14px;
   }
 
-  .quote-decision-actions {
+  .quote-decision-actions,
+  .quote-channel-options {
     grid-template-columns: 1fr;
+  }
+
+  .quote-modal-backdrop {
+    align-items: end;
+    padding: 10px;
+  }
+
+  .quote-modal {
+    width: 100%;
+    max-height: calc(100vh - 20px);
   }
 }

@@ -595,6 +595,7 @@ export function verifyOrderVerification(
   data: {
     challengeId: string;
     otp: string;
+    destination?: string;
   },
 ) {
   const normalizedOrderNumber = normalizeOrderNumber(orderNumber);
@@ -621,6 +622,9 @@ export function verifyOrderVerification(
       body: JSON.stringify({
         challengeId,
         otp,
+        ...(data.destination?.trim()
+          ? { destination: data.destination.trim() }
+          : {}),
       }),
     },
   );
@@ -644,6 +648,60 @@ export function startOrderInspection(orderNumber: string, challengeId: string) {
 
       body: JSON.stringify({
         challengeId: normalizedChallengeId,
+      }),
+    },
+  );
+}
+
+export type AgentQuoteDecision = "ACCEPTED" | "REJECTED";
+
+export type AgentQuoteDecisionResponse = {
+  decided: boolean;
+  alreadyDecided: boolean;
+  orderNumber: string;
+  orderStatus: string;
+  decision: AgentQuoteDecision;
+  decisionAt: string;
+  inspectionId: string;
+
+  quote: {
+    finalPrice: number;
+    quoteHash: string;
+    generatedAt: string;
+  };
+
+  nextStep: "PAYMENT" | "REJECTED";
+};
+
+export function commitAgentQuoteDecision(
+  orderNumber: string,
+  data: {
+    challengeId: string;
+    decision: AgentQuoteDecision;
+  },
+) {
+  const normalizedOrderNumber = normalizeOrderNumber(orderNumber);
+
+  const challengeId = data.challengeId.trim();
+
+  if (!challengeId) {
+    throw new Error("Verified quote decision challenge is required.");
+  }
+
+  if (data.decision !== "ACCEPTED" && data.decision !== "REJECTED") {
+    throw new Error("Decision must be ACCEPTED or REJECTED.");
+  }
+
+  return request<AgentQuoteDecisionResponse>(
+    `/agent-orders/${encodeURIComponent(
+      normalizedOrderNumber,
+    )}/verification/quote-decision`,
+    {
+      method: "POST",
+
+      body: JSON.stringify({
+        challengeId,
+        decision: data.decision,
       }),
     },
   );

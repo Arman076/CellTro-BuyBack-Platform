@@ -1543,6 +1543,12 @@ model AgentOrderInspection {
 
   quoteGeneratedAt DateTime?
 
+  // Customer's OTP-confirmed decision for this exact frozen quote.
+  // Null until the customer accepts or rejects the field-inspection offer.
+  quoteDecision            AgentQuoteDecision?
+  quoteDecisionAt          DateTime?
+  quoteDecisionChallengeId String?
+
   startedAt   DateTime @default(now())
   completedAt DateTime?
 
@@ -1553,6 +1559,8 @@ model AgentOrderInspection {
   @@index([vendorId, status, updatedAt])
   @@index([status, updatedAt])
   @@index([vendorId, quoteGeneratedAt])
+  @@index([quoteDecision, quoteDecisionAt])
+  @@index([quoteDecisionChallengeId])
 }
 
 enum AgentQuoteDecision {

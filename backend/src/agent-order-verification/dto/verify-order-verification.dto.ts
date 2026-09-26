@@ -1,5 +1,6 @@
 import {
   IsNotEmpty,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
@@ -20,4 +21,9 @@ export class VerifyOrderVerificationDto {
     },
   )
   otp!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(254)
+  destination?: string;
 }

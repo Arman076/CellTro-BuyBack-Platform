@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Param,
@@ -97,6 +98,7 @@ export class AgentOrderVerificationController {
       orderNumber,
       body.challengeId,
       body.otp,
+      body.destination,
     );
   }
 
@@ -131,6 +133,59 @@ export class AgentOrderVerificationController {
       ),
       orderNumber,
       challengeId,
+    );
+  }
+
+  @Post('quote-decision')
+  quoteDecision(
+    @Req()
+    request: AgentAuthenticatedRequest,
+
+    @Param('orderNumber')
+    orderNumber: string,
+
+    @Body()
+    body: {
+      challengeId?: string;
+      decision?: string;
+    },
+  ) {
+    const challengeId =
+      String(
+        body?.challengeId ??
+          '',
+      ).trim();
+
+    const decision =
+      String(
+        body?.decision ??
+          '',
+      )
+        .trim()
+        .toUpperCase();
+
+    if (!challengeId) {
+      throw new UnauthorizedException(
+        'Verified quote decision challenge is required.',
+      );
+    }
+
+    if (
+      decision !== 'ACCEPTED' &&
+      decision !== 'REJECTED'
+    ) {
+      throw new BadRequestException(
+        'Decision must be ACCEPTED or REJECTED.',
+      );
+    }
+
+    return this.verificationService.commitQuoteDecision(
+      this.getIdentity(
+        request,
+      ),
+      orderNumber,
+      challengeId,
+      decision,
     );
   }
 }

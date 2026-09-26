@@ -252,6 +252,30 @@ function getAction(
   }
 }
 
+
+function getVerificationDestination(
+  order: AgentOrderDetailResponse | null,
+  method: VerificationMethod,
+) {
+  if (!order) {
+    return '';
+  }
+
+  if (method === 'EMAIL') {
+    return (
+      order.address?.email?.trim() ||
+      order.customer?.email?.trim() ||
+      ''
+    );
+  }
+
+  return (
+    order.address?.phone?.trim() ||
+    order.customer?.phone?.trim() ||
+    ''
+  );
+}
+
 export default function AgentOrderDetailPage({
   params,
 }: PageProps) {
@@ -469,9 +493,10 @@ export default function AgentOrderDetailPage({
     );
 
     setDestination(
-      order?.customer?.phone ??
-        order?.address?.phone ??
-        '',
+      getVerificationDestination(
+        order,
+        'MOBILE',
+      ),
     );
 
     setChallengeId('');
@@ -524,25 +549,12 @@ export default function AgentOrderDetailPage({
     setOtp('');
     setResendSeconds(0);
 
-    if (
-      method === 'MOBILE'
-    ) {
-      setDestination(
-        order?.customer
-          ?.phone ??
-          order?.address
-            ?.phone ??
-          '',
-      );
-
-      return;
-    }
-
     setDestination(
-  order?.customer?.email ??
-    order?.address?.email ??
-    '',
-);
+      getVerificationDestination(
+        order,
+        method,
+      ),
+    );
   }
 
   async function sendOtp() {
@@ -668,6 +680,8 @@ export default function AgentOrderDetailPage({
             challengeId,
             otp:
               cleanOtp,
+            destination:
+              destination.trim(),
           },
         );
 
@@ -768,10 +782,7 @@ router.push(
   return;
 }
 
-   if (
-  currentAction.mode ===
-    'review'
-) {
+  if (currentAction.mode === 'review') {
   router.push(
     `/orders/${encodeURIComponent(
       currentOrder.orderNumber,
@@ -780,7 +791,6 @@ router.push(
 
   return;
 }
-
     if (
       currentAction.mode ===
         'complete'
@@ -1518,11 +1528,13 @@ router.push(
                 </label>
 
                 <p className="detail-verification-security">
-                  The entered contact
-                  must match the
-                  customer contact
-                  registered against
-                  this order.
+                  Existing customer
+                  contacts must match
+                  this order. If no email
+                  is registered, a new
+                  email can be saved only
+                  after successful OTP
+                  verification.
                 </p>
 
                 {verificationError && (
