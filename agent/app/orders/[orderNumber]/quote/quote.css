@@ -1,0 +1,455 @@
+:root {
+  --quote-sidebar-width: var(--sidebar-width, 250px);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.quote-shell {
+  min-height: 100vh;
+  background: #f5f7fb;
+  color: #172033;
+}
+
+.quote-main {
+  min-height: 100vh;
+  margin-left: var(--quote-sidebar-width);
+}
+
+.quote-mobile-topbar {
+  display: none;
+}
+
+.quote-container {
+  width: min(1120px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 34px 0 70px;
+}
+
+.quote-header {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 24px;
+}
+
+.quote-back,
+.quote-menu {
+  border: 0;
+  background: #fff;
+  box-shadow: 0 4px 16px rgba(23, 32, 51, 0.08);
+  cursor: pointer;
+}
+
+.quote-back {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 22px;
+}
+
+.quote-eyebrow,
+.quote-product-copy > span,
+.quote-next-card > div:first-child > span {
+  display: block;
+  margin-bottom: 5px;
+  color: #68758a;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.quote-header h1 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.15;
+}
+
+.quote-header p,
+.quote-product-copy p,
+.quote-offer-card p,
+.quote-next-card p {
+  margin: 7px 0 0;
+  color: #68758a;
+}
+
+.quote-order-number {
+  padding: 10px 14px;
+  border: 1px solid #e1e6ef;
+  border-radius: 10px;
+  background: #fff;
+  font-weight: 700;
+}
+
+.quote-product-card,
+.quote-offer-card,
+.quote-summary-card,
+.quote-next-card {
+  border: 1px solid #e3e8f0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(23, 32, 51, 0.05);
+}
+
+.quote-product-card {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 18px;
+  margin-bottom: 22px;
+}
+
+.quote-product-image {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #f3f5f9;
+  color: #7a8495;
+  font-size: 12px;
+}
+
+.quote-product-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.quote-product-copy h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.quote-complete-badge {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: #eaf8ef;
+  color: #19703a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.quote-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.75fr);
+  gap: 22px;
+}
+
+.quote-offer-card,
+.quote-summary-card {
+  padding: 26px;
+}
+
+.quote-offer-label {
+  color: #68758a;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.quote-offer-card > strong {
+  display: block;
+  margin-top: 8px;
+  font-size: clamp(38px, 5vw, 56px);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.quote-breakdown {
+  margin-top: 26px;
+  border-top: 1px solid #e8ebf1;
+}
+
+.quote-breakdown > div,
+.quote-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 0;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.quote-breakdown span,
+.quote-summary-row span {
+  color: #68758a;
+}
+
+.quote-breakdown-final {
+  font-size: 17px;
+}
+
+.quote-secure-note {
+  display: flex;
+  gap: 12px;
+  margin-top: 22px;
+  padding: 14px;
+  border-radius: 12px;
+  background: #f4f8ff;
+}
+
+.quote-secure-note > span {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #dfeaff;
+  font-weight: 900;
+}
+
+.quote-secure-note p {
+  margin-top: 3px;
+  font-size: 13px;
+}
+
+.quote-summary-card h3 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+.quote-summary-row b {
+  text-align: right;
+}
+
+.quote-next-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px 28px;
+  align-items: center;
+  margin-top: 22px;
+  padding: 24px 26px;
+}
+
+.quote-next-card h2 {
+  margin: 0;
+  font-size: 21px;
+}
+
+.quote-decision-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.quote-decision-actions button {
+  min-width: 128px;
+  height: 44px;
+  border-radius: 11px;
+  font-weight: 800;
+}
+
+.quote-reject-button {
+  border: 1px solid #d7dce5;
+  background: #fff;
+  color: #465267;
+}
+
+.quote-accept-button {
+  border: 0;
+  background: #172033;
+  color: #fff;
+}
+
+.quote-decision-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.quote-next-card small {
+  grid-column: 1 / -1;
+  color: #7a8495;
+}
+
+.quote-state-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background: #f5f7fb;
+}
+
+.quote-state-card {
+  display: grid;
+  justify-items: center;
+  width: min(420px, 100%);
+  padding: 30px;
+  border: 1px solid #e3e8f0;
+  border-radius: 18px;
+  background: #fff;
+  text-align: center;
+}
+
+.quote-state-card strong {
+  margin-top: 12px;
+  font-size: 19px;
+}
+
+.quote-state-card span {
+  margin-top: 6px;
+  color: #68758a;
+}
+
+.quote-state-card button {
+  margin-top: 18px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 10px;
+  background: #172033;
+  color: #fff;
+  cursor: pointer;
+}
+
+.quote-state-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff0f0;
+  color: #c43737;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.quote-loader {
+  width: 34px;
+  height: 34px;
+  border: 3px solid #e5e9ef;
+  border-top-color: #172033;
+  border-radius: 50%;
+  animation: quote-spin 0.8s linear infinite;
+}
+
+@keyframes quote-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 900px) {
+  .quote-main {
+    margin-left: 0;
+  }
+
+  .quote-mobile-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 62px;
+    padding: 10px 18px;
+    border-bottom: 1px solid #e4e8ef;
+    background: rgba(255, 255, 255, 0.96);
+  }
+
+  .quote-menu {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    font-size: 20px;
+  }
+
+  .quote-mobile-topbar div {
+    display: grid;
+  }
+
+  .quote-mobile-topbar span {
+    color: #7a8495;
+    font-size: 12px;
+  }
+
+  .quote-container {
+    width: min(100% - 32px, 760px);
+    padding-top: 24px;
+  }
+
+  .quote-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 650px) {
+  .quote-container {
+    width: min(100% - 24px, 620px);
+    padding: 18px 0 44px;
+  }
+
+  .quote-header {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .quote-order-number {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .quote-header h1 {
+    font-size: 25px;
+  }
+
+  .quote-product-card {
+    grid-template-columns: 62px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .quote-product-image {
+    width: 62px;
+    height: 62px;
+  }
+
+  .quote-complete-badge {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .quote-offer-card,
+  .quote-summary-card {
+    padding: 20px;
+  }
+
+  .quote-next-card {
+    grid-template-columns: 1fr;
+    padding: 20px;
+  }
+
+  .quote-decision-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .quote-decision-actions button {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+@media (max-width: 390px) {
+  .quote-mobile-topbar {
+    padding-inline: 12px;
+  }
+
+  .quote-container {
+    width: calc(100% - 20px);
+  }
+
+  .quote-offer-card > strong {
+    font-size: 36px;
+  }
+
+  .quote-breakdown > div,
+  .quote-summary-row {
+    gap: 12px;
+    font-size: 14px;
+  }
+
+  .quote-decision-actions {
+    grid-template-columns: 1fr;
+  }
+}

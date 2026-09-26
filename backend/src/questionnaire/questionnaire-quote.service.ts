@@ -21,6 +21,15 @@ type SendOtpInput = {
   answers: AnswerInput[];
 };
 
+type QuoteAudience = 'CUSTOMER' | 'AGENT';
+
+type CalculateQuoteInput = {
+  productId: number;
+  variantId: number;
+  answers: AnswerInput[];
+  audience?: QuoteAudience;
+};
+
 type AppliedLine = {
   optionId: number;
   itemId: number;
@@ -75,7 +84,11 @@ export class QuestionnaireQuoteService {
     return String(value || '').replace(/\D/g, '');
   }
 
-  private amount(type: 'PERCENTAGE' | 'FIXED', value: number, basePrice: number) {
+  private amount(
+    type: 'PERCENTAGE' | 'FIXED',
+    value: number,
+    basePrice: number,
+  ) {
     return type === 'FIXED'
       ? Math.max(0, value)
       : Math.max(0, (basePrice * value) / 100);
@@ -92,34 +105,43 @@ export class QuestionnaireQuoteService {
     },
   ) {
     const scope = option.applicabilityScope || 'GLOBAL';
-    const target = option.applicabilityTargetId == null
-      ? null
-      : Number(option.applicabilityTargetId);
+    const target =
+      option.applicabilityTargetId == null
+        ? null
+        : Number(option.applicabilityTargetId);
 
     if (scope === 'GLOBAL') return true;
     if (target === null) return false;
     if (scope === 'CATEGORY') return target === context.categoryId;
     if (scope === 'BRAND') return target === context.brandId;
-    if (scope === 'SERIES') return context.seriesId !== null && target === context.seriesId;
+    if (scope === 'SERIES')
+      return context.seriesId !== null && target === context.seriesId;
     if (scope === 'PRODUCT') return target === context.productId;
     if (scope === 'VARIANT') return target === context.variantId;
     return false;
   }
 
   private capabilityAllowed(option: any, capabilityIds: Set<number>) {
-    const required = (option.capabilities || []).map((x: any) => x.capabilityId);
-    return !required.length || required.some((id: number) => capabilityIds.has(id));
+    const required = (option.capabilities || []).map(
+      (x: any) => x.capabilityId,
+    );
+    return (
+      !required.length || required.some((id: number) => capabilityIds.has(id))
+    );
   }
 
   private resolveRule(option: any, context: any) {
     const rules = (option.deductionRules || [])
       .filter((rule: any) => rule.isActive)
-      .sort((a: any, b: any) => (b.priority - a.priority) || (b.id - a.id));
+      .sort((a: any, b: any) => b.priority - a.priority || b.id - a.id);
 
     const scopes: Array<[string, (r: any) => boolean]> = [
       ['VARIANT', (r) => r.variantId === context.variantId],
       ['PRODUCT', (r) => r.productId === context.productId],
-      ['SERIES', (r) => context.seriesId !== null && r.seriesId === context.seriesId],
+      [
+        'SERIES',
+        (r) => context.seriesId !== null && r.seriesId === context.seriesId,
+      ],
       ['BRAND', (r) => r.brandId === context.brandId],
       ['CATEGORY', (r) => r.categoryId === context.categoryId],
       ['GLOBAL', () => true],
@@ -130,14 +152,18 @@ export class QuestionnaireQuoteService {
       if (found) {
         return {
           deductionType: found.deductionType as 'PERCENTAGE' | 'FIXED',
-          deductionValue: this.toNumber(found.deductionValue ?? found.deductionPercent),
+          deductionValue: this.toNumber(
+            found.deductionValue ?? found.deductionPercent,
+          ),
         };
       }
     }
 
     return {
       deductionType: option.deductionType as 'PERCENTAGE' | 'FIXED',
-      deductionValue: this.toNumber(option.deductionValue ?? option.deductionPercent),
+      deductionValue: this.toNumber(
+        option.deductionValue ?? option.deductionPercent,
+      ),
     };
   }
 
@@ -163,9 +189,10 @@ export class QuestionnaireQuoteService {
 
     const type = String(policy.capType).toUpperCase();
     const value = this.toNumber(policy.capValue);
-    const cap = type === 'FIXED'
-      ? Math.max(0, value)
-      : Math.max(0, (basePrice * Math.min(100, value)) / 100);
+    const cap =
+      type === 'FIXED'
+        ? Math.max(0, value)
+        : Math.max(0, (basePrice * Math.min(100, value)) / 100);
 
     return Math.min(Math.max(0, amount), cap);
   }
@@ -236,7 +263,7 @@ export class QuestionnaireQuoteService {
     return total;
   }
 
-  async calculateQuote(body: SendOtpInput): Promise<QuoteResult> {
+  async calculateQuote(body: CalculateQuoteInput): Promise<QuoteResult> {
     const variant = await this.prisma.productVariant.findUnique({
       where: { id: Number(body.variantId) },
       include: {
@@ -246,7 +273,11 @@ export class QuestionnaireQuoteService {
       },
     });
 
-    if (!variant || !variant.isActive || variant.productId !== Number(body.productId)) {
+    if (
+      !variant ||
+      !variant.isActive ||
+      variant.productId !== Number(body.productId)
+    ) {
       throw new NotFoundException('Selected variant is invalid');
     }
     if (!variant.product || !variant.product.isActive) {
@@ -265,11 +296,23 @@ export class QuestionnaireQuoteService {
       variant.product.capabilities.map((x: any) => x.capabilityId),
     );
 
-    const customerAudience = await this.prisma.questionnaireAudience.findUnique({
-      where: { code: 'CUSTOMER' },
-    });
-    if (!customerAudience?.isActive) {
-      throw new BadRequestException('Customer questionnaire audience is not configured');
+    const audienceCode: QuoteAudience = body.audience ?? 'CUSTOMER';
+
+    const questionnaireAudience =
+      await this.prisma.questionnaireAudience.findUnique({
+        where: {
+          code: audienceCode,
+        },
+        select: {
+          id: true,
+          isActive: true,
+        },
+      });
+
+    if (!questionnaireAudience?.isActive) {
+      throw new BadRequestException(
+        `${audienceCode === 'AGENT' ? 'Agent' : 'Customer'} questionnaire audience is not configured`,
+      );
     }
 
     // One questionnaire query; no per-answer / per-rule N+1 queries.
@@ -277,17 +320,24 @@ export class QuestionnaireQuoteService {
       where: {
         isActive: true,
         section: { isActive: true },
-        audiences: { some: { audienceId: customerAudience.id } },
+        audiences: { some: { audienceId: questionnaireAudience.id } },
         OR: [{ categoryId: null }, { categoryId: context.categoryId }],
-        AND: [{
-          OR: [
-            { applyToAllProducts: true },
-            { productMappings: { some: { productId: context.productId } } },
-          ],
-        }],
+        AND: [
+          {
+            OR: [
+              { applyToAllProducts: true },
+              { productMappings: { some: { productId: context.productId } } },
+            ],
+          },
+        ],
       },
       include: {
         section: true,
+        conditions: {
+          select: {
+            dependsOnOptionId: true,
+          },
+        },
         options: {
           where: { isActive: true },
           include: {
@@ -307,7 +357,10 @@ export class QuestionnaireQuoteService {
     // over a global question with the same section + wording.
     const logicalQuestions = new Map<string, any>();
     for (const q of questions as any[]) {
-      const normalized = String(q.questionText || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const normalized = String(q.questionText || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' ');
       const key = `${q.sectionId}:${normalized}`;
       const previous = logicalQuestions.get(key);
       if (!previous || (previous.applyToAllProducts && !q.applyToAllProducts)) {
@@ -321,24 +374,68 @@ export class QuestionnaireQuoteService {
 
     const answers = body.answers || [];
     const answerByItem = new Map<number, AnswerInput>();
+    const selectedOptionIds = new Set<number>();
+
+    for (const answer of answers) {
+      if (answer.optionId) {
+        selectedOptionIds.add(Number(answer.optionId));
+      }
+
+      for (const optionId of answer.optionIds ?? []) {
+        selectedOptionIds.add(Number(optionId));
+      }
+
+      for (const childOptionId of answer.childOptionIds ?? []) {
+        selectedOptionIds.add(Number(childOptionId));
+      }
+    }
+
+    const isQuestionVisible = (question: any) => {
+      const conditions = question.conditions ?? [];
+
+      if (!conditions.length) {
+        return true;
+      }
+
+      return conditions.some((condition: any) =>
+        selectedOptionIds.has(Number(condition.dependsOnOptionId)),
+      );
+    };
     for (const answer of answers) {
       if (answerByItem.has(Number(answer.itemId))) {
-        throw new BadRequestException('Duplicate answer submitted for one question');
+        throw new BadRequestException(
+          'Duplicate answer submitted for one question',
+        );
       }
       answerByItem.set(Number(answer.itemId), answer);
     }
 
-    const missingRequired = effectiveQuestions.some((q: any) => q.isRequired && !answerByItem.has(q.id));
+    const missingRequired = effectiveQuestions.some(
+      (question: any) =>
+        question.isRequired &&
+        isQuestionVisible(question) &&
+        !answerByItem.has(question.id),
+    );
+
     if (missingRequired) {
-      throw new BadRequestException('Please answer all required questionnaire questions');
+      throw new BadRequestException(
+        'Please answer all required questionnaire questions',
+      );
     }
 
     const candidates: AppliedLine[] = [];
 
     for (const answer of answers) {
       const question = questionById.get(Number(answer.itemId));
+
       if (!question) {
         throw new BadRequestException('One questionnaire answer is invalid');
+      }
+
+      if (!isQuestionVisible(question)) {
+        throw new BadRequestException(
+          'One questionnaire answer is not currently applicable',
+        );
       }
 
       const mainOptions = question.options
@@ -358,16 +455,29 @@ export class QuestionnaireQuoteService {
         ),
       ];
 
-      if (question.answerType !== 'MULTI_SELECT' && submittedMainIds.length !== 1) {
-        throw new BadRequestException('Please select exactly one answer for this question');
+      if (
+        question.answerType !== 'MULTI_SELECT' &&
+        submittedMainIds.length !== 1
+      ) {
+        throw new BadRequestException(
+          'Please select exactly one answer for this question',
+        );
       }
 
-      if (question.answerType === 'MULTI_SELECT' && question.isRequired && submittedMainIds.length === 0) {
-        throw new BadRequestException('Please select at least one answer for this question');
+      if (
+        question.answerType === 'MULTI_SELECT' &&
+        question.isRequired &&
+        submittedMainIds.length === 0
+      ) {
+        throw new BadRequestException(
+          'Please select at least one answer for this question',
+        );
       }
 
       if (submittedMainIds.some((id) => !mainOptionIds.has(id))) {
-        throw new BadRequestException('Selected answer does not belong to the question or is not applicable');
+        throw new BadRequestException(
+          'Selected answer does not belong to the question or is not applicable',
+        );
       }
 
       const selectedMainSet = new Set(submittedMainIds);
@@ -375,7 +485,11 @@ export class QuestionnaireQuoteService {
       const maybePush = (candidate: any, shouldDeduct: boolean) => {
         if (!shouldDeduct) return;
         const rule = this.resolveRule(candidate, context);
-        const deduction = this.amount(rule.deductionType, rule.deductionValue, basePrice);
+        const deduction = this.amount(
+          rule.deductionType,
+          rule.deductionValue,
+          basePrice,
+        );
         if (deduction <= 0) return;
         candidates.push({
           optionId: candidate.id,
@@ -413,7 +527,9 @@ export class QuestionnaireQuoteService {
         selectedMainSet.has(Number(o.id)),
       );
       if (!option) {
-        throw new BadRequestException('Selected answer does not belong to the question');
+        throw new BadRequestException(
+          'Selected answer does not belong to the question',
+        );
       }
 
       const children = question.options
@@ -421,13 +537,17 @@ export class QuestionnaireQuoteService {
         .filter((o: any) => this.capabilityAllowed(o, productCapabilityIds))
         .filter((o: any) => this.optionApplicable(o, context));
 
-      const applicableChildIds = new Set(children.map((c: any) => Number(c.id)));
+      const applicableChildIds = new Set(
+        children.map((c: any) => Number(c.id)),
+      );
       const selectedChildIds = [
         ...new Set((answer.childOptionIds || []).map(Number)),
       ];
 
       if (selectedChildIds.some((id) => !applicableChildIds.has(id))) {
-        throw new BadRequestException('One selected sub-option is not applicable');
+        throw new BadRequestException(
+          'One selected sub-option is not applicable',
+        );
       }
 
       if (option.showChildOptions) {
@@ -452,7 +572,9 @@ export class QuestionnaireQuoteService {
           throw new BadRequestException('Only one sub-option can be selected');
         }
       } else if (selectedChildIds.length) {
-        throw new BadRequestException('Sub-options are not allowed for this answer');
+        throw new BadRequestException(
+          'Sub-options are not allowed for this answer',
+        );
       }
 
       maybePush(option, option.deductionTrigger === 'SELECTED');
@@ -475,9 +597,12 @@ export class QuestionnaireQuoteService {
     // If duplicate representations have different values, keep the larger applicable deduction.
     const deduped = new Map<string, AppliedLine>();
     for (const line of candidates) {
-      const key = line.issueCode ? `ISSUE:${line.issueCode}` : `OPTION:${line.optionId}`;
+      const key = line.issueCode
+        ? `ISSUE:${line.issueCode}`
+        : `OPTION:${line.optionId}`;
       const previous = deduped.get(key);
-      if (!previous || line.deduction > previous.deduction) deduped.set(key, line);
+      if (!previous || line.deduction > previous.deduction)
+        deduped.set(key, line);
     }
     const lines = [...deduped.values()];
 
@@ -502,9 +627,11 @@ export class QuestionnaireQuoteService {
     );
     const hasSevereIssue = lines.some((x) => x.severity === 'SEVERE');
 
-    const productPolicy = await this.prisma.questionnaireQuotePolicy.findUnique({
-      where: { key: `PRODUCT:${context.productId}` },
-    });
+    const productPolicy = await this.prisma.questionnaireQuotePolicy.findUnique(
+      {
+        where: { key: `PRODUCT:${context.productId}` },
+      },
+    );
     const globalPolicy = await this.prisma.questionnaireQuotePolicy.findUnique({
       where: { key: 'GLOBAL' },
     });
@@ -534,7 +661,10 @@ export class QuestionnaireQuoteService {
         : (basePrice * Math.min(100, Math.max(0, minimumFinalValue))) / 100;
 
     const maxAllowedDeduction = Math.max(0, basePrice - minimumFinalQuote);
-    const totalDeduction = Math.min(Math.max(0, rawDeduction), maxAllowedDeduction);
+    const totalDeduction = Math.min(
+      Math.max(0, rawDeduction),
+      maxAllowedDeduction,
+    );
     const deductionCapPercent =
       basePrice > 0 ? (maxAllowedDeduction / basePrice) * 100 : 0;
 
@@ -553,10 +683,25 @@ export class QuestionnaireQuoteService {
     };
   }
 
+  async calculateAgentQuote(input: {
+    productId: number;
+    variantId: number;
+    answers: AnswerInput[];
+  }): Promise<QuoteResult> {
+    return this.calculateQuote({
+      productId: input.productId,
+      variantId: input.variantId,
+      answers: input.answers,
+      audience: 'AGENT',
+    });
+  }
+
   async sendOtp(body: SendOtpInput) {
     const phone = this.cleanPhone(body.phone);
     if (!/^[6-9]\d{9}$/.test(phone)) {
-      throw new BadRequestException('Enter a valid 10-digit Indian mobile number');
+      throw new BadRequestException(
+        'Enter a valid 10-digit Indian mobile number',
+      );
     }
 
     const quote = await this.calculateQuote(body);
@@ -581,7 +726,8 @@ export class QuestionnaireQuoteService {
 
   async verifyOtp(sessionId: string, otp: string) {
     const session = this.sessions.get(sessionId);
-    if (!session) throw new UnauthorizedException('OTP session is invalid or expired');
+    if (!session)
+      throw new UnauthorizedException('OTP session is invalid or expired');
     if (Date.now() > session.expiresAt) {
       this.sessions.delete(sessionId);
       throw new UnauthorizedException('OTP has expired');

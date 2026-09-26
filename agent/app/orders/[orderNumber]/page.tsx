@@ -768,12 +768,18 @@ router.push(
   return;
 }
 
-    if (
-      currentAction.mode ===
-        'review'
-    ) {
-      return;
-    }
+   if (
+  currentAction.mode ===
+    'review'
+) {
+  router.push(
+    `/orders/${encodeURIComponent(
+      currentOrder.orderNumber,
+    )}/quote`,
+  );
+
+  return;
+}
 
     if (
       currentAction.mode ===

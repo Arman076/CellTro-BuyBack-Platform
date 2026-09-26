@@ -1,6 +1,5 @@
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  'http://localhost:4000';
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
 type ApiErrorBody = {
   message?: string | string[];
@@ -13,59 +12,42 @@ export class ApiError extends Error {
     public readonly status: number,
   ) {
     super(message);
-    this.name = 'ApiError';
+    this.name = "ApiError";
   }
 }
 
-async function request<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const response = await fetch(
-    `${API_BASE_URL}${path}`,
-    {
-      ...options,
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
 
-      headers: {
-        'Content-Type':
-          'application/json',
+    headers: {
+      "Content-Type": "application/json",
 
-        ...options.headers,
-      },
-
-      credentials:
-        'include',
-
-      cache:
-        'no-store',
+      ...options.headers,
     },
-  );
+
+    credentials: "include",
+
+    cache: "no-store",
+  });
 
   if (!response.ok) {
     let body: ApiErrorBody = {};
 
     try {
-      body =
-        (await response.json()) as ApiErrorBody;
+      body = (await response.json()) as ApiErrorBody;
     } catch {
       // Response body may be empty.
     }
 
-    const message =
-      Array.isArray(body.message)
-        ? body.message[0]
-        : body.message ??
-          'Something went wrong. Please try again.';
+    const message = Array.isArray(body.message)
+      ? body.message[0]
+      : (body.message ?? "Something went wrong. Please try again.");
 
-    throw new ApiError(
-      message,
-      response.status,
-    );
+    throw new ApiError(message, response.status);
   }
 
-  if (
-    response.status === 204
-  ) {
+  if (response.status === 204) {
     return undefined as T;
   }
 
@@ -142,19 +124,14 @@ export type AgentMeResponse = {
   };
 };
 
-export function sendAgentOtp(
-  email: string,
-) {
-  return request<SendOtpResponse>(
-    '/agent-auth/send-email-otp',
-    {
-      method: 'POST',
+export function sendAgentOtp(email: string) {
+  return request<SendOtpResponse>("/agent-auth/send-email-otp", {
+    method: "POST",
 
-      body: JSON.stringify({
-        email,
-      }),
-    },
-  );
+    body: JSON.stringify({
+      email,
+    }),
+  });
 }
 
 export function verifyAgentOtp(
@@ -162,78 +139,57 @@ export function verifyAgentOtp(
   email: string,
   otp: string,
 ) {
-  return request<VerifyOtpResponse>(
-    '/agent-auth/verify-email-otp',
-    {
-      method: 'POST',
+  return request<VerifyOtpResponse>("/agent-auth/verify-email-otp", {
+    method: "POST",
 
-      body: JSON.stringify({
-        challengeId,
-        email,
-        otp,
-      }),
-    },
-  );
+    body: JSON.stringify({
+      challengeId,
+      email,
+      otp,
+    }),
+  });
 }
 
-export function registerAgent(
-  data: {
-    fullName: string;
-    email: string;
-    mobile: string;
-    aadhaarNumber: string;
-    address: string;
-    vendorCode: string;
-    password: string;
-    verificationToken: string;
-  },
-) {
-  return request<RegistrationResponse>(
-    '/agent-auth/register',
-    {
-      method: 'POST',
+export function registerAgent(data: {
+  fullName: string;
+  email: string;
+  mobile: string;
+  aadhaarNumber: string;
+  address: string;
+  vendorCode: string;
+  password: string;
+  verificationToken: string;
+}) {
+  return request<RegistrationResponse>("/agent-auth/register", {
+    method: "POST",
 
-      body:
-        JSON.stringify(data),
-    },
-  );
+    body: JSON.stringify(data),
+  });
 }
 
-export function loginAgent(
-  identifier: string,
-  password: string,
-) {
-  return request<AgentLoginResponse>(
-    '/agent-auth/login',
-    {
-      method: 'POST',
+export function loginAgent(identifier: string, password: string) {
+  return request<AgentLoginResponse>("/agent-auth/login", {
+    method: "POST",
 
-      body: JSON.stringify({
-        identifier,
-        password,
-      }),
-    },
-  );
+    body: JSON.stringify({
+      identifier,
+      password,
+    }),
+  });
 }
 
 export function getAgentMe() {
-  return request<AgentMeResponse>(
-    '/agent-account/me',
-    {
-      method: 'GET',
-    },
-  );
+  return request<AgentMeResponse>("/agent-account/me", {
+    method: "GET",
+  });
 }
 
 export function logoutAgent() {
   return request<{
     authenticated: boolean;
-  }>(
-    '/agent-account/logout',
-    {
-      method: 'POST',
-    },
-  );
+  }>("/agent-account/logout", {
+    method: "POST",
+  });
 }
 
 /* ============================================================
@@ -242,21 +198,12 @@ export function logoutAgent() {
  */
 
 export type DashboardRange =
-  | 'TODAY'
-  | 'TOMORROW'
-  | 'YESTERDAY'
-  | 'ALL'
-  | 'LAST_7_DAYS'
-  | 'LAST_30_DAYS';
+  "TODAY" | "TOMORROW" | "YESTERDAY" | "ALL" | "LAST_7_DAYS" | "LAST_30_DAYS";
 
 export type DashboardPickup = {
-  assignmentId:
-    | number
-    | null;
+  assignmentId: number | null;
 
-  assignedAt:
-    | string
-    | null;
+  assignedAt: string | null;
 
   orderId: string;
   orderNumber: string;
@@ -324,23 +271,18 @@ export type AgentDashboardResponse = {
     dealValue: number;
   };
 
-  pickups:
-    DashboardPickup[];
+  pickups: DashboardPickup[];
 };
 
-export function getAgentDashboard(
-  range: DashboardRange =
-    'TODAY',
-) {
-  const params =
-    new URLSearchParams({
-      range,
-    });
+export function getAgentDashboard(range: DashboardRange = "TODAY") {
+  const params = new URLSearchParams({
+    range,
+  });
 
   return request<AgentDashboardResponse>(
     `/agent-dashboard?${params.toString()}`,
     {
-      method: 'GET',
+      method: "GET",
     },
   );
 }
@@ -351,18 +293,10 @@ export function getAgentDashboard(
  */
 
 export type AgentOrderStatusGroup =
-  | 'ALL'
-  | 'PENDING'
-  | 'IN_PROCESS'
-  | 'COMPLETED';
+  "ALL" | "PENDING" | "IN_PROCESS" | "COMPLETED";
 
 export type AgentOrderDateFilter =
-  | 'ALL'
-  | 'TODAY'
-  | 'TOMORROW'
-  | 'YESTERDAY'
-  | 'LAST_7_DAYS'
-  | 'LAST_30_DAYS';
+  "ALL" | "TODAY" | "TOMORROW" | "YESTERDAY" | "LAST_7_DAYS" | "LAST_30_DAYS";
 
 export type AgentOrderListItem = {
   id: string;
@@ -425,68 +359,37 @@ export type AgentOrdersResponse = {
 
   filters: {
     search: string;
-    statusGroup:
-      AgentOrderStatusGroup;
-    dateFilter:
-      AgentOrderDateFilter;
+    statusGroup: AgentOrderStatusGroup;
+    dateFilter: AgentOrderDateFilter;
   };
 };
 
 export async function getAgentOrders(
   options: {
     search?: string;
-    statusGroup?:
-      AgentOrderStatusGroup;
-    dateFilter?:
-      AgentOrderDateFilter;
+    statusGroup?: AgentOrderStatusGroup;
+    dateFilter?: AgentOrderDateFilter;
     page?: number;
     limit?: number;
   } = {},
 ) {
-  const params =
-    new URLSearchParams();
+  const params = new URLSearchParams();
 
-  if (
-    options.search?.trim()
-  ) {
-    params.set(
-      'search',
-      options.search.trim(),
-    );
+  if (options.search?.trim()) {
+    params.set("search", options.search.trim());
   }
 
-  params.set(
-    'statusGroup',
-    options.statusGroup ??
-      'ALL',
-  );
+  params.set("statusGroup", options.statusGroup ?? "ALL");
 
-  params.set(
-    'dateFilter',
-    options.dateFilter ??
-      'ALL',
-  );
+  params.set("dateFilter", options.dateFilter ?? "ALL");
 
-  params.set(
-    'page',
-    String(
-      options.page ?? 1,
-    ),
-  );
+  params.set("page", String(options.page ?? 1));
 
-  params.set(
-    'limit',
-    String(
-      options.limit ?? 20,
-    ),
-  );
+  params.set("limit", String(options.limit ?? 20));
 
-  return request<AgentOrdersResponse>(
-    `/agent-orders?${params.toString()}`,
-    {
-      method: 'GET',
-    },
-  );
+  return request<AgentOrdersResponse>(`/agent-orders?${params.toString()}`, {
+    method: "GET",
+  });
 }
 
 /* ============================================================
@@ -563,24 +466,17 @@ export type AgentOrderDetailResponse = {
   updatedAt: string;
 };
 
-export function getAgentOrder(
-  orderNumber: string,
-) {
-  const normalized =
-    orderNumber.trim();
+export function getAgentOrder(orderNumber: string) {
+  const normalized = orderNumber.trim();
 
   if (!normalized) {
-    throw new Error(
-      'Order number is required.',
-    );
+    throw new Error("Order number is required.");
   }
 
   return request<AgentOrderDetailResponse>(
-    `/agent-orders/${encodeURIComponent(
-      normalized,
-    )}`,
+    `/agent-orders/${encodeURIComponent(normalized)}`,
     {
-      method: 'GET',
+      method: "GET",
     },
   );
 }
@@ -598,31 +494,22 @@ export function getAgentOrder(
  */
 
 export type OrderVerificationPurpose =
-  | 'INSPECTION_START'
-  | 'QUOTE_ACCEPT'
-  | 'QUOTE_REJECT';
+  "INSPECTION_START" | "QUOTE_ACCEPT" | "QUOTE_REJECT";
 
-export type OrderVerificationChannel =
-  | 'SMS'
-  | 'EMAIL';
+export type OrderVerificationChannel = "SMS" | "EMAIL";
 
 export type OrderVerificationSendResponse = {
   challengeId: string;
 
-  purpose:
-    OrderVerificationPurpose;
+  purpose: OrderVerificationPurpose;
 
-  channel:
-    OrderVerificationChannel;
+  channel: OrderVerificationChannel;
 
-  destinationMasked:
-    string;
+  destinationMasked: string;
 
-  expiresAt:
-    string;
+  expiresAt: string;
 
-  expiresInSeconds:
-    number;
+  expiresInSeconds: number;
 };
 
 export type OrderVerificationVerifyResponse = {
@@ -630,14 +517,11 @@ export type OrderVerificationVerifyResponse = {
 
   challengeId: string;
 
-  purpose:
-    OrderVerificationPurpose;
+  purpose: OrderVerificationPurpose;
 
-  channel:
-    OrderVerificationChannel;
+  channel: OrderVerificationChannel;
 
-  verifiedAt?:
-    string;
+  verifiedAt?: string;
 };
 
 export type StartInspectionResponse = {
@@ -652,17 +536,13 @@ export type StartInspectionResponse = {
 
     challengeId: string;
 
-    verificationPurpose:
-      OrderVerificationPurpose;
+    verificationPurpose: OrderVerificationPurpose;
 
-    verificationChannel:
-      OrderVerificationChannel;
+    verificationChannel: OrderVerificationChannel;
 
-    verifiedAt:
-      string | null;
+    verifiedAt: string | null;
 
-    startedAt:
-      string | null;
+    startedAt: string | null;
   };
 
   evidence: {
@@ -670,16 +550,11 @@ export type StartInspectionResponse = {
   };
 };
 
-function normalizeOrderNumber(
-  orderNumber: string,
-) {
-  const normalized =
-    orderNumber.trim();
+function normalizeOrderNumber(orderNumber: string) {
+  const normalized = orderNumber.trim();
 
   if (!normalized) {
-    throw new Error(
-      'Order number is required.',
-    );
+    throw new Error("Order number is required.");
   }
 
   return normalized;
@@ -689,22 +564,15 @@ export function sendOrderVerification(
   orderNumber: string,
   data: {
     destination: string;
-    purpose:
-      OrderVerificationPurpose;
+    purpose: OrderVerificationPurpose;
   },
 ) {
-  const normalizedOrderNumber =
-    normalizeOrderNumber(
-      orderNumber,
-    );
+  const normalizedOrderNumber = normalizeOrderNumber(orderNumber);
 
-  const destination =
-    data.destination.trim();
+  const destination = data.destination.trim();
 
   if (!destination) {
-    throw new Error(
-      'Mobile number or email is required.',
-    );
+    throw new Error("Mobile number or email is required.");
   }
 
   return request<OrderVerificationSendResponse>(
@@ -712,12 +580,11 @@ export function sendOrderVerification(
       normalizedOrderNumber,
     )}/verification/send`,
     {
-      method: 'POST',
+      method: "POST",
 
       body: JSON.stringify({
         destination,
-        purpose:
-          data.purpose,
+        purpose: data.purpose,
       }),
     },
   );
@@ -730,33 +597,18 @@ export function verifyOrderVerification(
     otp: string;
   },
 ) {
-  const normalizedOrderNumber =
-    normalizeOrderNumber(
-      orderNumber,
-    );
+  const normalizedOrderNumber = normalizeOrderNumber(orderNumber);
 
-  const challengeId =
-    data.challengeId.trim();
+  const challengeId = data.challengeId.trim();
 
-  const otp =
-    data.otp
-      .replace(/\D/g, '')
-      .trim();
+  const otp = data.otp.replace(/\D/g, "").trim();
 
   if (!challengeId) {
-    throw new Error(
-      'Verification challenge is required.',
-    );
+    throw new Error("Verification challenge is required.");
   }
 
-  if (
-    !/^\d{4,9}$/.test(
-      otp,
-    )
-  ) {
-    throw new Error(
-      'Enter a valid OTP.',
-    );
+  if (!/^\d{4,9}$/.test(otp)) {
+    throw new Error("Enter a valid OTP.");
   }
 
   return request<OrderVerificationVerifyResponse>(
@@ -764,7 +616,7 @@ export function verifyOrderVerification(
       normalizedOrderNumber,
     )}/verification/verify`,
     {
-      method: 'POST',
+      method: "POST",
 
       body: JSON.stringify({
         challengeId,
@@ -774,24 +626,13 @@ export function verifyOrderVerification(
   );
 }
 
-export function startOrderInspection(
-  orderNumber: string,
-  challengeId: string,
-) {
-  const normalizedOrderNumber =
-    normalizeOrderNumber(
-      orderNumber,
-    );
+export function startOrderInspection(orderNumber: string, challengeId: string) {
+  const normalizedOrderNumber = normalizeOrderNumber(orderNumber);
 
-  const normalizedChallengeId =
-    challengeId.trim();
+  const normalizedChallengeId = challengeId.trim();
 
-  if (
-    !normalizedChallengeId
-  ) {
-    throw new Error(
-      'Verified challenge is required.',
-    );
+  if (!normalizedChallengeId) {
+    throw new Error("Verified challenge is required.");
   }
 
   return request<StartInspectionResponse>(
@@ -799,11 +640,10 @@ export function startOrderInspection(
       normalizedOrderNumber,
     )}/verification/start-inspection`,
     {
-      method: 'POST',
+      method: "POST",
 
       body: JSON.stringify({
-        challengeId:
-          normalizedChallengeId,
+        challengeId: normalizedChallengeId,
       }),
     },
   );
@@ -842,10 +682,7 @@ export type AgentInspectionOption = {
   minChildSelections: number;
   maxChildSelections: number | null;
 
-  childSelectionMode:
-    | 'SINGLE'
-    | 'MULTIPLE'
-    | string;
+  childSelectionMode: "SINGLE" | "MULTIPLE" | string;
 
   issueGroups: {
     id: number;
@@ -853,8 +690,7 @@ export type AgentInspectionOption = {
     displayOrder: number;
   }[];
 
-  childOptions:
-    AgentInspectionChildOption[];
+  childOptions: AgentInspectionChildOption[];
 };
 
 export type AgentInspectionQuestion = {
@@ -863,11 +699,7 @@ export type AgentInspectionQuestion = {
   name: string;
   questionText: string;
 
-  answerType:
-    | 'YES_NO'
-    | 'SINGLE_SELECT'
-    | 'MULTI_SELECT'
-    | string;
+  answerType: "YES_NO" | "SINGLE_SELECT" | "MULTI_SELECT" | string;
 
   displayOrder: number;
   isRequired: boolean;
@@ -880,11 +712,18 @@ export type AgentInspectionQuestion = {
     calculationMode: string;
   };
 
-  dependsOnOptionIds:
-    number[];
+  dependsOnOptionIds: number[];
 
-  options:
-    AgentInspectionOption[];
+  options: AgentInspectionOption[];
+};
+
+export type AgentInspectionQuote = {
+  basePrice: number;
+  rawDeduction: number;
+  totalDeduction: number;
+  finalPrice: number;
+  quoteHash: string;
+  quoteGeneratedAt: string;
 };
 
 export type AgentInspectionResponse = {
@@ -902,19 +741,17 @@ export type AgentInspectionResponse = {
   inspection: {
     id: string;
 
-    status:
-      | 'IN_PROGRESS'
-      | 'COMPLETED';
+    status: "IN_PROGRESS" | "COMPLETED";
 
     startedAt: string;
     completedAt: string | null;
 
-    answers:
-      AgentInspectionAnswer[];
+    answers: AgentInspectionAnswer[];
+
+    quote: AgentInspectionQuote | null;
   };
 
-  questionnaire:
-    AgentInspectionQuestion[];
+  questionnaire: AgentInspectionQuestion[];
 };
 
 export type SaveAgentInspectionAnswersResponse = {
@@ -924,20 +761,28 @@ export type SaveAgentInspectionAnswersResponse = {
   answerCount: number;
 };
 
-export function getAgentInspection(
-  orderNumber: string,
-) {
-  const normalized =
-    normalizeOrderNumber(
-      orderNumber,
-    );
+export type CompleteAgentInspectionResponse = {
+  completed: boolean;
+  alreadyCompleted: boolean;
+  orderNumber: string;
+  status: string;
+
+  inspection: {
+    id: string;
+    status: "COMPLETED";
+    completedAt: string;
+  };
+
+  quote: AgentInspectionQuote;
+};
+
+export function getAgentInspection(orderNumber: string) {
+  const normalized = normalizeOrderNumber(orderNumber);
 
   return request<AgentInspectionResponse>(
-    `/agent-orders/${encodeURIComponent(
-      normalized,
-    )}/inspection`,
+    `/agent-orders/${encodeURIComponent(normalized)}/inspection`,
     {
-      method: 'GET',
+      method: "GET",
     },
   );
 }
@@ -946,17 +791,30 @@ export function saveAgentInspectionAnswers(
   orderNumber: string,
   answers: AgentInspectionAnswer[],
 ) {
-  const normalized =
-    normalizeOrderNumber(
-      orderNumber,
-    );
+  const normalized = normalizeOrderNumber(orderNumber);
 
   return request<SaveAgentInspectionAnswersResponse>(
-    `/agent-orders/${encodeURIComponent(
-      normalized,
-    )}/inspection/answers`,
+    `/agent-orders/${encodeURIComponent(normalized)}/inspection/answers`,
     {
-      method: 'PATCH',
+      method: "PATCH",
+
+      body: JSON.stringify({
+        answers,
+      }),
+    },
+  );
+}
+
+export function completeAgentInspection(
+  orderNumber: string,
+  answers: AgentInspectionAnswer[],
+) {
+  const normalized = normalizeOrderNumber(orderNumber);
+
+  return request<CompleteAgentInspectionResponse>(
+    `/agent-orders/${encodeURIComponent(normalized)}/inspection/complete`,
+    {
+      method: "POST",
 
       body: JSON.stringify({
         answers,

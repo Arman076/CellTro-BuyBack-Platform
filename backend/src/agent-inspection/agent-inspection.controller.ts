@@ -4,24 +4,19 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Req,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 
-import {
-  AgentSessionGuard,
-} from '../agent-session/agent-session.guard.js';
+import { AgentSessionGuard } from '../agent-session/agent-session.guard.js';
 
-import type {
-  AgentAuthenticatedRequest,
-} from '../agent-session/agent-session.guard.js';
+import type { AgentAuthenticatedRequest } from '../agent-session/agent-session.guard.js';
 
-import {
-  AgentInspectionService,
-} from './agent-inspection.service.js';
+import { AgentInspectionService } from './agent-inspection.service.js';
 
-type SaveInspectionAnswersBody = {
+type InspectionAnswersBody = {
   answers: Array<{
     questionId: number;
     optionIds: number[];
@@ -31,29 +26,19 @@ type SaveInspectionAnswersBody = {
 @Controller('agent-orders/:orderNumber/inspection')
 @UseGuards(AgentSessionGuard)
 export class AgentInspectionController {
-  constructor(
-    private readonly inspectionService:
-      AgentInspectionService,
-  ) {}
+  constructor(private readonly inspectionService: AgentInspectionService) {}
 
-  private getIdentity(
-    request: AgentAuthenticatedRequest,
-  ) {
-    const session =
-      request.agentSession;
+  private getIdentity(request: AgentAuthenticatedRequest) {
+    const session = request.agentSession;
 
     if (!session) {
-      throw new UnauthorizedException(
-        'Agent session is required.',
-      );
+      throw new UnauthorizedException('Agent session is required.');
     }
 
     return {
-      agentId:
-        session.agentId,
+      agentId: session.agentId,
 
-      vendorId:
-        session.vendorId,
+      vendorId: session.vendorId,
     };
   }
 
@@ -80,9 +65,27 @@ export class AgentInspectionController {
     orderNumber: string,
 
     @Body()
-    body: SaveInspectionAnswersBody,
+    body: InspectionAnswersBody,
   ) {
     return this.inspectionService.saveAnswers(
+      this.getIdentity(request),
+      orderNumber,
+      body,
+    );
+  }
+
+  @Post('complete')
+  completeInspection(
+    @Req()
+    request: AgentAuthenticatedRequest,
+
+    @Param('orderNumber')
+    orderNumber: string,
+
+    @Body()
+    body: InspectionAnswersBody,
+  ) {
+    return this.inspectionService.completeInspection(
       this.getIdentity(request),
       orderNumber,
       body,

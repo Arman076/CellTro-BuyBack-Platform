@@ -1503,23 +1503,45 @@ enum AgentInspectionStatus {
 model AgentOrderInspection {
   id String @id @default(cuid())
 
+  // Exactly one inspection per order.
   orderId String    @unique
   order   SellOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   agentId Int
   agent   Agent @relation(fields: [agentId], references: [id], onDelete: Restrict)
 
+  // Vendor isolation.
   vendorId Int
 
   status AgentInspectionStatus @default(IN_PROGRESS)
 
-  // Immutable reference values captured when inspection begins.
+  // Product/variant captured when inspection starts.
   productId Int
   variantId Int
 
-  // Agent-observed questionnaire answers only.
-  // Customer's original questionnaire remains untouched on SellOrder.
+  // Agent questionnaire answers.
+  // Customer questionnaireSnapshot remains untouched.
   answers Json?
+
+  // ============================================================
+  // AUTHORITATIVE AGENT QUOTE SNAPSHOT
+  // Calculated ONLY by backend using DB-configured pricing rules.
+  // Frontend must never supply these values.
+  // ============================================================
+
+  quoteBasePrice      Decimal? @db.Decimal(12, 2)
+  quoteRawDeduction   Decimal? @db.Decimal(12, 2)
+  quoteTotalDeduction Decimal? @db.Decimal(12, 2)
+  quoteFinalPrice     Decimal? @db.Decimal(12, 2)
+
+  // Frozen server-side calculation/audit snapshot.
+  quoteSnapshot Json?
+
+  // Fingerprint of the authoritative generated quote.
+  // Used later for quote-bound ACCEPT/REJECT OTP.
+  quoteHash String? @unique
+
+  quoteGeneratedAt DateTime?
 
   startedAt   DateTime @default(now())
   completedAt DateTime?
@@ -1530,4 +1552,10 @@ model AgentOrderInspection {
   @@index([agentId, status, updatedAt])
   @@index([vendorId, status, updatedAt])
   @@index([status, updatedAt])
+  @@index([vendorId, quoteGeneratedAt])
+}
+
+enum AgentQuoteDecision {
+  ACCEPTED
+  REJECTED
 }
