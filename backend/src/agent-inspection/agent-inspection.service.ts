@@ -920,6 +920,21 @@ export class AgentInspectionService {
         }
       }
 
+      const rootOptionIdSet =
+        new Set(
+          rootOptions.map(
+            (option) => option.id,
+          ),
+        );
+
+      const selectedRootOptionIds =
+        answer.optionIds.filter(
+          (optionId) =>
+            rootOptionIdSet.has(
+              optionId,
+            ),
+        );
+
       if (
         (
           question.answerType ===
@@ -927,7 +942,7 @@ export class AgentInspectionService {
           question.answerType ===
             'SINGLE_SELECT'
         ) &&
-        answer.optionIds.length >
+        selectedRootOptionIds.length >
           1
       ) {
         throw new BadRequestException(

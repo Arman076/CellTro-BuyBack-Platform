@@ -647,14 +647,22 @@ export type StartInspectionResponse = {
   status: string;
 
   inspection: {
+    id: string;
     started: boolean;
+
     challengeId: string;
+
     verificationPurpose:
       OrderVerificationPurpose;
+
     verificationChannel:
       OrderVerificationChannel;
-    verifiedAt: string | null;
-    startedAt: string | null;
+
+    verifiedAt:
+      string | null;
+
+    startedAt:
+      string | null;
   };
 
   evidence: {
@@ -796,6 +804,162 @@ export function startOrderInspection(
       body: JSON.stringify({
         challengeId:
           normalizedChallengeId,
+      }),
+    },
+  );
+}
+
+/* ============================================================
+ * AGENT DEVICE INSPECTION
+ * ============================================================
+ */
+
+export type AgentInspectionAnswer = {
+  questionId: number;
+  optionIds: number[];
+};
+
+export type AgentInspectionChildOption = {
+  id: number;
+  label: string;
+  value: string;
+  issueCode: string | null;
+  severity: string | null;
+  issueGroupId: number | null;
+};
+
+export type AgentInspectionOption = {
+  id: number;
+  label: string;
+  value: string;
+  issueCode: string | null;
+  severity: string | null;
+
+  showChildOptions: boolean;
+  childPrompt: string | null;
+
+  requireChildSelection: boolean;
+  minChildSelections: number;
+  maxChildSelections: number | null;
+
+  childSelectionMode:
+    | 'SINGLE'
+    | 'MULTIPLE'
+    | string;
+
+  issueGroups: {
+    id: number;
+    name: string;
+    displayOrder: number;
+  }[];
+
+  childOptions:
+    AgentInspectionChildOption[];
+};
+
+export type AgentInspectionQuestion = {
+  id: number;
+  code: string;
+  name: string;
+  questionText: string;
+
+  answerType:
+    | 'YES_NO'
+    | 'SINGLE_SELECT'
+    | 'MULTI_SELECT'
+    | string;
+
+  displayOrder: number;
+  isRequired: boolean;
+
+  section: {
+    id: number;
+    code: string;
+    name: string;
+    displayOrder: number;
+    calculationMode: string;
+  };
+
+  dependsOnOptionIds:
+    number[];
+
+  options:
+    AgentInspectionOption[];
+};
+
+export type AgentInspectionResponse = {
+  orderNumber: string;
+  status: string;
+
+  product: {
+    id: number;
+    variantId: number;
+    name: string;
+    variant: string;
+    image: string | null;
+  };
+
+  inspection: {
+    id: string;
+
+    status:
+      | 'IN_PROGRESS'
+      | 'COMPLETED';
+
+    startedAt: string;
+    completedAt: string | null;
+
+    answers:
+      AgentInspectionAnswer[];
+  };
+
+  questionnaire:
+    AgentInspectionQuestion[];
+};
+
+export type SaveAgentInspectionAnswersResponse = {
+  saved: boolean;
+  orderNumber: string;
+  inspectionId: string;
+  answerCount: number;
+};
+
+export function getAgentInspection(
+  orderNumber: string,
+) {
+  const normalized =
+    normalizeOrderNumber(
+      orderNumber,
+    );
+
+  return request<AgentInspectionResponse>(
+    `/agent-orders/${encodeURIComponent(
+      normalized,
+    )}/inspection`,
+    {
+      method: 'GET',
+    },
+  );
+}
+
+export function saveAgentInspectionAnswers(
+  orderNumber: string,
+  answers: AgentInspectionAnswer[],
+) {
+  const normalized =
+    normalizeOrderNumber(
+      orderNumber,
+    );
+
+  return request<SaveAgentInspectionAnswersResponse>(
+    `/agent-orders/${encodeURIComponent(
+      normalized,
+    )}/inspection/answers`,
+    {
+      method: 'PATCH',
+
+      body: JSON.stringify({
+        answers,
       }),
     },
   );

@@ -37,6 +37,7 @@ import {
 import {
   AgentOrderVerificationModule,
 } from './agent-order-verification/agent-order-verification.module.js';
+import { AgentInspectionModule } from './agent-inspection/agent-inspection.module.js';
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import {
     AgentDashboardModule,
     AgentOrdersModule,
     AgentOrderVerificationModule,
+    AgentInspectionModule,
   ],
   controllers: [AppController],
   providers: [AppService],

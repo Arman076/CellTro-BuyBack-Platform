@@ -702,11 +702,13 @@ setOrder(
   refreshedOrder,
 );
 
-setVerificationStep(
-  'SUCCESS',
-);
-
 setOtp('');
+
+router.push(
+  `/orders/${encodeURIComponent(
+    orderNumber,
+  )}/inspection`,
+);
     } catch (err) {
       handleApiError(
         err,
@@ -754,11 +756,17 @@ setOtp('');
      * nonexistent /quote route.
      */
     if (
-      currentAction.mode ===
-        'inspection'
-    ) {
-      return;
-    }
+  currentAction.mode ===
+    'inspection'
+) {
+  router.push(
+    `/orders/${encodeURIComponent(
+      currentOrder.orderNumber,
+    )}/inspection`,
+  );
+
+  return;
+}
 
     if (
       currentAction.mode ===

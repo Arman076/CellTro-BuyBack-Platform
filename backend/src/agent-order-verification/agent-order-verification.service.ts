@@ -251,6 +251,8 @@ export class AgentOrderVerificationService {
           id: true,
           orderNumber: true,
           status: true,
+           productId: true,
+            variantId: true,
 
           customer: {
             select: {
@@ -1194,7 +1196,7 @@ export class AgentOrderVerificationService {
         now,
     };
   }
-    async startInspection(
+   async startInspection(
   identity: AgentIdentity,
   orderNumber: string,
   challengeId: string,
@@ -1205,17 +1207,12 @@ export class AgentOrderVerificationService {
       orderNumber,
     );
 
-  if (
-    ![
-      'PICKUP_REQUESTED',
-      'PICKUP_CONFIRMED',
-      'PICKUP_STARTED',
-    ].includes(order.status)
-  ) {
-    throw new ConflictException(
-      'Inspection cannot be started for the current order status.',
-    );
-  }
+  const validStartedStatuses = [
+    'PICKUP_STARTED',
+    'INSPECTION_COMPLETED',
+    'PAYMENT_COMPLETED',
+    'COMPLETED',
+  ];
 
   const result =
     await this.prisma.$transaction(
@@ -1223,8 +1220,12 @@ export class AgentOrderVerificationService {
         const challenge =
           await tx.orderVerificationChallenge.findFirst({
             where: {
-              id: challengeId,
-              orderId: order.id,
+              id:
+                challengeId,
+
+              orderId:
+                order.id,
+
               purpose:
                 OrderVerificationPurpose.INSPECTION_START,
             },
@@ -1248,55 +1249,128 @@ export class AgentOrderVerificationService {
         }
 
         /*
-         * Idempotent retry:
-         * A consumed challenge is accepted only when
-         * this order has genuinely entered inspection.
+         * Canonical idempotency check.
+         *
+         * A consumed OTP by itself is NOT enough.
+         * Inspection is considered started only if:
+         *
+         * 1. lifecycle has reached inspection,
+         * 2. AgentOrderInspection exists,
+         * 3. INSPECTION_STARTED event exists.
+         */
+        const resolveAlreadyStarted =
+          async () => {
+            const [
+              currentOrder,
+              existingInspection,
+              existingEvent,
+            ] =
+              await Promise.all([
+                tx.sellOrder.findUnique({
+                  where: {
+                    id:
+                      order.id,
+                  },
+
+                  select: {
+                    status:
+                      true,
+                  },
+                }),
+
+                tx.agentOrderInspection.findUnique({
+                  where: {
+                    orderId:
+                      order.id,
+                  },
+
+                  select: {
+                    id: true,
+                    agentId: true,
+                    vendorId: true,
+                    status: true,
+                    startedAt: true,
+                  },
+                }),
+
+                tx.orderEvent.findUnique({
+                  where: {
+                    idempotencyKey:
+                      `inspection-started:${order.id}`,
+                  },
+
+                  select: {
+                    id: true,
+                    createdAt: true,
+                  },
+                }),
+              ]);
+
+            if (
+              !currentOrder ||
+              !validStartedStatuses.includes(
+                currentOrder.status,
+              ) ||
+              !existingInspection ||
+              !existingEvent
+            ) {
+              return null;
+            }
+
+            /*
+             * Do not allow another Agent/Vendor to
+             * resume an inspection created by a
+             * different owner.
+             */
+            if (
+              existingInspection.agentId !==
+                identity.agentId ||
+              existingInspection.vendorId !==
+                identity.vendorId
+            ) {
+              throw new ConflictException(
+                'Inspection belongs to another agent assignment.',
+              );
+            }
+
+            return {
+              currentOrder,
+              existingInspection,
+              existingEvent,
+            };
+          };
+
+        /*
+         * Safe retry after the original request
+         * already completed successfully.
          */
         if (
           challenge.status ===
           OrderVerificationStatus.CONSUMED
         ) {
-          const existingEvent =
-            await tx.orderEvent.findUnique({
-              where: {
-                idempotencyKey:
-                  `inspection-started:${order.id}`,
-              },
+          const existing =
+            await resolveAlreadyStarted();
 
-              select: {
-                id: true,
-                createdAt: true,
-              },
-            });
-
-          const currentOrder =
-            await tx.sellOrder.findUnique({
-              where: {
-                id: order.id,
-              },
-
-              select: {
-                status: true,
-              },
-            });
-
-          if (
-            !existingEvent ||
-            currentOrder?.status !==
-              'PICKUP_STARTED'
-          ) {
+          if (!existing) {
             throw new ConflictException(
               'Inspection state is inconsistent. Please contact support.',
             );
           }
 
           return {
-            alreadyStarted: true,
+            alreadyStarted:
+              true,
+
             challenge,
+
             status:
-              currentOrder.status,
+              existing.currentOrder.status,
+
             startedAt:
-              existingEvent.createdAt,
+              existing.existingEvent.createdAt,
+
+            inspectionId:
+              existing.existingInspection.id,
           };
         }
 
@@ -1309,33 +1383,81 @@ export class AgentOrderVerificationService {
           );
         }
 
+        const now =
+          new Date();
+
         if (
           challenge.expiresAt.getTime() <=
-          Date.now()
+          now.getTime()
         ) {
           throw new UnauthorizedException(
             'OTP verification has expired. Request a new OTP.',
           );
         }
 
-        const now =
-          new Date();
+        /*
+         * Re-read lifecycle inside the transaction.
+         *
+         * The order returned by getOwnedOrder()
+         * happened before the transaction and must
+         * not be trusted for the mutation.
+         */
+        const currentOrder =
+          await tx.sellOrder.findUnique({
+            where: {
+              id:
+                order.id,
+            },
+
+            select: {
+              status:
+                true,
+            },
+          });
+
+        if (!currentOrder) {
+          throw new NotFoundException(
+            'Order not found.',
+          );
+        }
+
+        if (
+          ![
+            'PICKUP_REQUESTED',
+            'PICKUP_CONFIRMED',
+            'PICKUP_STARTED',
+          ].includes(
+            currentOrder.status,
+          )
+        ) {
+          throw new ConflictException(
+            'Inspection cannot be started for the current order status.',
+          );
+        }
 
         /*
-         * Exactly one request can consume
+         * Exactly one concurrent request can consume
          * VERIFIED -> CONSUMED.
          */
         const consumed =
           await tx.orderVerificationChallenge.updateMany({
             where: {
-              id: challenge.id,
-              orderId: order.id,
+              id:
+                challenge.id,
+
+              orderId:
+                order.id,
 
               purpose:
                 OrderVerificationPurpose.INSPECTION_START,
 
               status:
                 OrderVerificationStatus.VERIFIED,
+
+              expiresAt: {
+                gt:
+                  now,
+              },
             },
 
             data: {
@@ -1347,24 +1469,66 @@ export class AgentOrderVerificationService {
             },
           });
 
+        /*
+         * Another concurrent request may have
+         * consumed the challenge first.
+         *
+         * Accept it only when the complete canonical
+         * inspection state exists.
+         */
         if (
-          consumed.count !== 1
+          consumed.count !==
+          1
         ) {
-          const current =
+          const currentChallenge =
             await tx.orderVerificationChallenge.findUnique({
               where: {
-                id: challenge.id,
+                id:
+                  challenge.id,
               },
 
               select: {
+                id: true,
                 status: true,
+                purpose: true,
+                channel: true,
+                destinationMasked: true,
+                expiresAt: true,
+                verifiedAt: true,
+                consumedAt: true,
               },
             });
 
           if (
-            current?.status ===
+            currentChallenge?.status ===
             OrderVerificationStatus.CONSUMED
           ) {
+            const existing =
+              await resolveAlreadyStarted();
+
+            if (existing) {
+              return {
+                alreadyStarted:
+                  true,
+
+                challenge:
+                  currentChallenge,
+
+                status:
+                  existing.currentOrder.status,
+
+                startedAt:
+                  existing.existingEvent.createdAt,
+
+                inspectionId:
+                  existing.existingInspection.id,
+              };
+            }
+
+            /*
+             * If the competing transaction is still
+             * completing, do not manufacture success.
+             */
             throw new ConflictException(
               'Inspection is already being started. Please retry.',
             );
@@ -1376,13 +1540,18 @@ export class AgentOrderVerificationService {
         }
 
         /*
-         * State transition is conditional.
-         * This protects against concurrent lifecycle changes.
+         * PICKUP_REQUESTED / PICKUP_CONFIRMED
+         *            ↓
+         *       PICKUP_STARTED
+         *
+         * Conditional update prevents us from
+         * overwriting a concurrent lifecycle change.
          */
         const orderTransition =
           await tx.sellOrder.updateMany({
             where: {
-              id: order.id,
+              id:
+                order.id,
 
               status: {
                 in: [
@@ -1398,13 +1567,9 @@ export class AgentOrderVerificationService {
             },
           });
 
-        /*
-         * If order was already PICKUP_STARTED before
-         * this challenge was consumed, do not create
-         * another status-history row.
-         */
         if (
-          orderTransition.count === 1
+          orderTransition.count ===
+          1
         ) {
           await tx.orderStatusHistory.create({
             data: {
@@ -1419,19 +1584,27 @@ export class AgentOrderVerificationService {
             },
           });
         } else {
-          const currentOrder =
+          /*
+           * PICKUP_STARTED is allowed because a
+           * previous/legacy flow may already have
+           * transitioned the order but not created
+           * the inspection runtime state.
+           */
+          const lifecycle =
             await tx.sellOrder.findUnique({
               where: {
-                id: order.id,
+                id:
+                  order.id,
               },
 
               select: {
-                status: true,
+                status:
+                  true,
               },
             });
 
           if (
-            currentOrder?.status !==
+            lifecycle?.status !==
             'PICKUP_STARTED'
           ) {
             throw new ConflictException(
@@ -1441,11 +1614,82 @@ export class AgentOrderVerificationService {
         }
 
         /*
-         * Same DB transaction:
-         * challenge consumption
-         * + order lifecycle
-         * + status history
-         * + audit event.
+         * One inspection per SellOrder.
+         *
+         * We do not accept agent/vendor/product
+         * information from the frontend.
+         */
+        let inspection =
+          await tx.agentOrderInspection.findUnique({
+            where: {
+              orderId:
+                order.id,
+            },
+
+            select: {
+              id: true,
+              agentId: true,
+              vendorId: true,
+              status: true,
+              startedAt: true,
+            },
+          });
+
+        if (!inspection) {
+          inspection =
+            await tx.agentOrderInspection.create({
+              data: {
+                orderId:
+                  order.id,
+
+                agentId:
+                  identity.agentId,
+
+                vendorId:
+                  identity.vendorId,
+
+                productId:
+                  order.productId,
+
+                variantId:
+                  order.variantId,
+
+                /*
+                 * Agent answers begin empty.
+                 * Customer questionnaireSnapshot is
+                 * intentionally NOT copied here.
+                 */
+                answers:
+                  [],
+              },
+
+              select: {
+                id: true,
+                agentId: true,
+                vendorId: true,
+                status: true,
+                startedAt: true,
+              },
+            });
+        } else if (
+          inspection.agentId !==
+            identity.agentId ||
+          inspection.vendorId !==
+            identity.vendorId
+        ) {
+          throw new ConflictException(
+            'Inspection belongs to another agent assignment.',
+          );
+        }
+
+        /*
+         * Lifecycle event lives in the SAME DB
+         * transaction as:
+         *
+         * VERIFIED -> CONSUMED
+         * SellOrder -> PICKUP_STARTED
+         * OrderStatusHistory
+         * AgentOrderInspection
          */
         const inspectionEvent =
           await this.orderEvents.record(
@@ -1474,13 +1718,17 @@ export class AgentOrderVerificationService {
 
                 destinationMasked:
                   challenge.destinationMasked,
+
+                inspectionId:
+                  inspection.id,
               },
             },
             tx,
           );
 
         return {
-          alreadyStarted: false,
+          alreadyStarted:
+            false,
 
           challenge: {
             ...challenge,
@@ -1497,12 +1745,16 @@ export class AgentOrderVerificationService {
 
           startedAt:
             inspectionEvent.createdAt,
+
+          inspectionId:
+            inspection.id,
         };
       },
     );
 
   return {
-    started: true,
+    started:
+      true,
 
     alreadyStarted:
       result.alreadyStarted,
@@ -1514,7 +1766,11 @@ export class AgentOrderVerificationService {
       result.status,
 
     inspection: {
-      started: true,
+      id:
+        result.inspectionId,
+
+      started:
+        true,
 
       challengeId:
         result.challenge.id,
